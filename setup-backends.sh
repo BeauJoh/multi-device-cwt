@@ -37,6 +37,20 @@ append_ld_library_path() {
   esac
 }
 
+# Prepend a directory to PATH (if it exists and isn't already there). Used
+# so that toolchain binaries (nvcc, hipcc) resolve correctly for anyone who
+# just runs `make`/`make sweep`, without needing PATH edits in their
+# personal shell rc files.
+prepend_path() {
+  local dir="$1"
+  [ -n "$dir" ] || return 0
+  [ -d "$dir" ] || return 0
+  case ":${PATH:-}:" in
+    *":$dir:"*) ;;
+    *) export PATH="$dir${PATH:+:$PATH}" ;;
+  esac
+}
+
 if ! command -v module >/dev/null 2>&1; then
   if [ -f /etc/profile.d/modules.sh ]; then
     source /etc/profile.d/modules.sh
@@ -167,6 +181,7 @@ case "$HOST" in
     export BACKENDS="hip"
     export HIP_DEV_TARGET="gfx90a"
     export MACHINE="MI250"
+    export ROCM_PATH="${ROCM_PATH:-/opt/rocm}"
     append_ld_library_path "/opt/rocm/llvm/lib"
     ;;
   *)
@@ -205,11 +220,25 @@ if [[ "${BACKENDS:-}" == *"cuda"* ]]; then
     export CUDA_PATH="$(dirname "$(dirname "$(command -v nvcc)")")"
   fi
   export CUDA_TOOLKIT_ROOT_PATH="${CUDA_TOOLKIT_ROOT_PATH:-$CUDA_PATH}"
+  # Make sure nvcc actually resolves for this host, regardless of what's in
+  # the caller's personal shell rc files.
+  prepend_path "$CUDA_PATH/bin"
+  if ! command -v nvcc >/dev/null 2>&1; then
+    echo "warning: BACKENDS includes cuda but nvcc was not found on PATH or at \$CUDA_PATH/bin ($CUDA_PATH/bin)" >&2
+  fi
 fi
 
 if [[ "${BACKENDS:-}" == *"hip"* ]]; then
   if [[ -z "${ROCM_PATH:-}" ]] && command -v hipcc >/dev/null 2>&1; then
     export ROCM_PATH="$(dirname "$(dirname "$(command -v hipcc)")")"
+  fi
+  export ROCM_PATH="${ROCM_PATH:-/opt/rocm}"
+  export HIP_PATH="${HIP_PATH:-$ROCM_PATH}"
+  # Make sure hipcc actually resolves for this host, and that it's the real
+  # ROCm one rather than a stale/distro-packaged one earlier on PATH.
+  prepend_path "$ROCM_PATH/bin"
+  if ! command -v hipcc >/dev/null 2>&1; then
+    echo "warning: BACKENDS includes hip but hipcc was not found on PATH or at \$ROCM_PATH/bin ($ROCM_PATH/bin)" >&2
   fi
 fi
 
