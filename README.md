@@ -60,6 +60,24 @@ for bin in cwt-cuda-nvcc cwt-hip-hipcc cwt-cuda-scale-nvidia cwt-cuda-scale-amd;
 done
 ```
 
+## Sweeping
+
+```bash
+make sweep
+```
+
+Builds whatever this host supports (same `BACKENDS` filtering as plain `make`), then runs every applicable binary across GPU counts `1..N`, `REPS` times each (default 5), appending every run to `results/scaling.csv`. Device counts are auto-detected — `nvidia-smi -L | wc -l` for CUDA, `rocminfo | grep -c 'Device Type:.*GPU'` for HIP — not hardcoded, so it adapts to whatever's actually plugged into that box (1 on the H100 box, 8 on the MI250 box).
+
+Override any of `N`, `B`, `REPS`, `CSV`, e.g.:
+
+```bash
+make sweep N=4096 REPS=10
+```
+
+`make clean-results` removes the results directory.
+
+To combine results from both machines into one report figure, copy each box's `results/scaling.csv` back to one place (e.g. concatenate, keeping one header) before plotting.
+
 ## Plotting
 
 `plotting/plot_four_platforms.py` takes a results CSV and produces a grouped bar chart comparing all four implementations (median with IQR error bars), one grouping per machine:

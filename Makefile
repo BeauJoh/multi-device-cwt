@@ -17,7 +17,17 @@ HIP_ARCH  ?= gfx908
 
 SCALE_TARBALL_URL ?= https://pkgs.scale-lang.com/tar/scale-latest-amd64.tar.xz
 
-.PHONY: all build clean \
+# ------------------------------------------------------------
+# Sweep defaults
+# ------------------------------------------------------------
+
+N           ?= 2048
+B           ?= 1
+REPS        ?= 5
+RESULTS_DIR ?= results
+CSV         ?= $(RESULTS_DIR)/scaling.csv
+
+.PHONY: all build sweep clean clean-results \
         cwt-cuda-nvcc cwt-hip-hipcc \
         cwt-cuda-scale-nvidia cwt-cuda-scale-amd \
         ensure-scale
@@ -107,5 +117,60 @@ cwt-cuda-scale-amd: $(CWT_CUDA_SRC) | ensure-scale
 	nvcc -O3 -std=c++17 -o $@ $<
 
 # ------------------------------------------------------------
+# Sweep: build (BACKENDS-filtered), then run each applicable binary across
+# GPU counts 1..N (N = however many devices this host actually has),
+# REPS times each, appending every run to one CSV. Device counts are
+# auto-detected per backend (`nvidia-smi -L` / `rocminfo`), not hardcoded,
+# so this scales the sweep to whatever's actually plugged in.
+# ------------------------------------------------------------
+sweep: build
+	@. ./setup-backends.sh; \
+	mkdir -p "$(RESULTS_DIR)"; \
+	ran_any=0; \
+	if [[ "$$BACKENDS" == *"cuda"* ]]; then \
+		ndev="$$(nvidia-smi -L 2>/dev/null | wc -l)"; \
+		if [ -z "$$ndev" ] || [ "$$ndev" -lt 1 ]; then \
+			echo "error: BACKENDS contains cuda but nvidia-smi reports no devices" >&2; exit 1; \
+		fi; \
+		echo "==> $$HOST ($$MACHINE): sweeping CUDA GPUs 1..$$ndev, $(REPS) reps, N=$(N) B=$(B)"; \
+		for gpus in $$(seq 1 "$$ndev"); do \
+			for rep in $$(seq 1 $(REPS)); do \
+				echo "--- CUDA/NVCC gpus=$$gpus rep=$$rep/$(REPS) ---"; \
+				CWT_IMPL="CUDA / NVCC" CWT_BACKEND="CUDA" CWT_MACHINE="$$MACHINE" \
+				  ./cwt-cuda-nvcc --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only; \
+				echo "--- CUDA/SCALE-NVIDIA gpus=$$gpus rep=$$rep/$(REPS) ---"; \
+				CWT_IMPL="CUDA / SCALE→NVIDIA" CWT_BACKEND="CUDA" CWT_MACHINE="$$MACHINE" \
+				  ./cwt-cuda-scale-nvidia --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only; \
+			done; \
+		done; \
+		ran_any=1; \
+	fi; \
+	if [[ "$$BACKENDS" == *"hip"* ]]; then \
+		ndev="$$(rocminfo 2>/dev/null | grep -c 'Device Type:.*GPU')"; \
+		if [ -z "$$ndev" ] || [ "$$ndev" -lt 1 ]; then \
+			echo "error: BACKENDS contains hip but rocminfo reports no GPU devices" >&2; exit 1; \
+		fi; \
+		echo "==> $$HOST ($$MACHINE): sweeping HIP GPUs 1..$$ndev, $(REPS) reps, N=$(N) B=$(B)"; \
+		for gpus in $$(seq 1 "$$ndev"); do \
+			for rep in $$(seq 1 $(REPS)); do \
+				echo "--- HIP/HIPCC gpus=$$gpus rep=$$rep/$(REPS) ---"; \
+				CWT_IMPL="HIP / HIPCC" CWT_BACKEND="HIP" CWT_MACHINE="$$MACHINE" \
+				  ./cwt-hip-hipcc --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only; \
+				echo "--- CUDA/SCALE-AMD gpus=$$gpus rep=$$rep/$(REPS) ---"; \
+				CWT_IMPL="CUDA / SCALE→AMD" CWT_BACKEND="HIP" CWT_MACHINE="$$MACHINE" \
+				  ./cwt-cuda-scale-amd --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only; \
+			done; \
+		done; \
+		ran_any=1; \
+	fi; \
+	if [ "$$ran_any" -eq 0 ]; then \
+		echo "error: no supported backend found in BACKENDS='$$BACKENDS' (host: $$HOST)" >&2; exit 1; \
+	fi; \
+	echo "==> results appended to $(CSV)"
+
+# ------------------------------------------------------------
 clean:
 	rm -f cwt-cuda-nvcc cwt-hip-hipcc cwt-cuda-scale-nvidia cwt-cuda-scale-amd
+
+clean-results:
+	rm -rf "$(RESULTS_DIR)"
