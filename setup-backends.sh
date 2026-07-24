@@ -162,7 +162,7 @@ case "$HOST" in
     export CUDA_DEV_TARGET="sm_90"
     export MACHINE="H100"
     export CUDA_PATH="${CUDA_PATH:-/usr/local/cuda-13.3}"
-
+    ;;
   *)
     echo "Unknown system ($HOST)." >&2
     exit 1
