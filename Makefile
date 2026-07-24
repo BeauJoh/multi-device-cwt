@@ -58,13 +58,24 @@ build:
 # Native builds
 # ------------------------------------------------------------
 
-# Native CUDA build via nvcc.
+# Native CUDA build via nvcc. Sources setup-backends.sh itself and resolves
+# the arch from the shell env it produces (HIP_DEV_TARGET/CUDA_DEV_TARGET),
+# rather than Make's own $(CUDA_ARCH) — that Make variable is only fresh
+# when this recipe happens to run inside build's recursive $(MAKE) call; if
+# you invoke this target directly without having sourced setup-backends.sh
+# yourself first, Make's copy is stale/empty. Falls back to $(CUDA_ARCH) /
+# $(CUDA_NVCC) if for some reason the shell env doesn't have it either.
 cwt-cuda-nvcc: $(CWT_CUDA_SRC)
-	$(CUDA_NVCC) -O3 -std=c++17 -arch=sm_$(CUDA_ARCH) -o $@ $<
+	. ./setup-backends.sh; \
+	cuda_sm="sm_$${CUDA_DEV_TARGET#sm_}"; \
+	[ "$$cuda_sm" != "sm_" ] || cuda_sm="sm_$(CUDA_ARCH)"; \
+	nvcc -O3 -std=c++17 -arch="$$cuda_sm" -o $@ $<
 
-# Native HIP build via hipcc.
+# Native HIP build via hipcc. Same self-contained approach as cwt-cuda-nvcc.
 cwt-hip-hipcc: $(CWT_HIP_SRC)
-	$(HIP_HIPCC) -O3 -std=c++17 --offload-arch=$(HIP_ARCH) -o $@ $<
+	. ./setup-backends.sh; \
+	hip_arch="$${HIP_DEV_TARGET:-$(HIP_ARCH)}"; \
+	$(HIP_HIPCC) -O3 -std=c++17 --offload-arch="$$hip_arch" -o $@ $<
 
 # ------------------------------------------------------------
 # Ensure SCALE is installed
@@ -109,12 +120,19 @@ ensure-scale:
 # SCALE builds (same CUDA source, compiled via SCALE's nvcc)
 # ------------------------------------------------------------
 
-# CUDA source built through SCALE, targeting NVIDIA hardware.
+# CUDA source built through SCALE, targeting NVIDIA hardware. Resolves arch
+# from the shell env (see cwt-cuda-nvcc comment above for why), not Make's
+# $(CUDA_ARCH). SCALE_CUDA_VERSION, if set in the environment (e.g.
+# `SCALE_CUDA_VERSION=13.1 make cwt-cuda-scale-nvidia`), is picked up
+# automatically since it's a plain env var inherited by this shell.
 cwt-cuda-scale-nvidia: $(CWT_CUDA_SRC) | ensure-scale
-	. ./setup-backends.sh && \
-	source "$(SCALE_ROOT)/bin/scaleenv" sm_$(CUDA_ARCH) && \
+	. ./setup-backends.sh; \
+	cuda_sm="sm_$${CUDA_DEV_TARGET#sm_}"; \
+	[ "$$cuda_sm" != "sm_" ] || cuda_sm="sm_$(CUDA_ARCH)"; \
+	cuda_compute="$${cuda_sm#sm_}"; \
+	source "$(SCALE_ROOT)/bin/scaleenv" "$$cuda_sm" && \
 	nvcc \
-	  -gencode arch=compute_$(CUDA_ARCH),code=sm_$(CUDA_ARCH) \
+	  -gencode arch=compute_$$cuda_compute,code=$$cuda_sm \
 	  $(NVCCFLAGS) \
 	  $$CPPFLAGS \
 	  -o $@ $< \
@@ -123,7 +141,9 @@ cwt-cuda-scale-nvidia: $(CWT_CUDA_SRC) | ensure-scale
 
 # Same CUDA source built through SCALE, targeting AMD hardware.
 cwt-cuda-scale-amd: $(CWT_CUDA_SRC) | ensure-scale
-	source "$(SCALE_ROOT)/bin/scaleenv" $(HIP_ARCH) && \
+	. ./setup-backends.sh; \
+	hip_arch="$${HIP_DEV_TARGET:-$(HIP_ARCH)}"; \
+	source "$(SCALE_ROOT)/bin/scaleenv" "$$hip_arch" && \
 	nvcc -O3 -std=c++17 -o $@ $<
 
 # ------------------------------------------------------------
