@@ -10,12 +10,12 @@ CWT_HIP_SRC  ?= cwt_hip.cpp
 NVIDIA_NVCC ?= $(shell command -v nvcc 2>/dev/null)
 CUDA_NVCC   ?= $(NVIDIA_NVCC)
 CUDA_ARCH   ?= $(patsubst sm_%,%,$(CUDA_DEV_TARGET))
-SCALE_ROOT  ?= $(CURDIR)/scale-1.7.3-Linux
+SCALE_ROOT  ?= $(CURDIR)/scale-1.7.2
 
 HIP_HIPCC ?= hipcc
 HIP_ARCH  ?= gfx908
 
-SCALE_TARBALL_URL ?= https://pkgs.scale-lang.com/tar/scale-latest-amd64.tar.xz
+SCALE_TARBALL_URL ?= https://pkgs.scale-lang.com/tar/scale-1.7.2-amd64.tar.xz
 
 # ------------------------------------------------------------
 # Sweep defaults
@@ -81,11 +81,14 @@ ensure-scale:
 		tmpdir="$$(mktemp -d)"; \
 		( wget -q -O "$$tmpdir/scale.tar.xz" "$(SCALE_TARBALL_URL)" \
 		  && tar xf "$$tmpdir/scale.tar.xz" -C "$$tmpdir" ) || { rm -rf "$$tmpdir"; exit 1; }; \
-		extracted="$$(find "$$tmpdir" -maxdepth 1 -mindepth 1 -type d -name 'scale-*' | head -n1)"; \
-		if [ -z "$$extracted" ]; then \
-			echo "error: could not find an extracted 'scale-*' directory in the tarball" >&2; \
+		scaleenv_path="$$(find "$$tmpdir" -type f -path '*/bin/scaleenv' | head -n1)"; \
+		if [ -z "$$scaleenv_path" ]; then \
+			echo "error: could not find bin/scaleenv anywhere in the extracted tarball" >&2; \
+			echo "==> extracted tarball contents (up to 3 levels deep):" >&2; \
+			find "$$tmpdir" -maxdepth 3 >&2; \
 			rm -rf "$$tmpdir"; exit 1; \
 		fi; \
+		extracted="$$(dirname "$$(dirname "$$scaleenv_path")")"; \
 		rm -rf "$(SCALE_ROOT)"; \
 		mv "$$extracted" "$(SCALE_ROOT)"; \
 		rm -rf "$$tmpdir"; \

@@ -22,7 +22,7 @@ A small benchmark for scaling Continuous Wavelet Transforms (CWT) across multipl
 
 - A CUDA toolkit (`nvcc`) for the native and SCALE→NVIDIA builds.
 - ROCm/HIP (`hipcc`) for the native HIP build.
-- A SCALE install, unpacked at `./scale-1.7.3-Linux` (or point `SCALE_ROOT` elsewhere) for the two `scale-*` builds. You don't need to install this yourself — `make cwt-cuda-scale-nvidia` / `make cwt-cuda-scale-amd` depend on an `ensure-scale` target that downloads and unpacks the latest SCALE tarball automatically if it's missing.
+- A SCALE install, unpacked at `./scale-1.7.2` (or point `SCALE_ROOT` elsewhere) for the two `scale-*` builds. You don't need to install this yourself — `make cwt-cuda-scale-nvidia` / `make cwt-cuda-scale-amd` depend on an `ensure-scale` target that downloads and unpacks SCALE 1.7.2 (pinned, via `SCALE_TARBALL_URL`) automatically if it's missing.
 - `hostname -s` must match one of the known hosts in `setup-backends.sh` (`milan2`, `milan0`, `hudson`, `faraday`, `cousteau`, `zenith`), or export `CUDA_DEV_TARGET` / `HIP_DEV_TARGET` yourself.
 
 ## Building
