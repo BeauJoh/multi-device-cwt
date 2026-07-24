@@ -137,6 +137,8 @@ sweep: build
 	@. ./setup-backends.sh; \
 	mkdir -p "$(RESULTS_DIR)"; \
 	ran_any=0; \
+	sweep_hip_arch="$${HIP_DEV_TARGET:-gfx908}"; \
+	sweep_cuda_sm="sm_$${CUDA_DEV_TARGET#sm_}"; \
 	if [[ "$$BACKENDS" == *"cuda"* ]]; then \
 		ndev="$$(nvidia-smi -L 2>/dev/null | wc -l)"; \
 		if [ -z "$$ndev" ] || [ "$$ndev" -lt 1 ]; then \
@@ -149,7 +151,7 @@ sweep: build
 				CWT_IMPL="CUDA / NVCC" CWT_BACKEND="CUDA" CWT_MACHINE="$$MACHINE" \
 				  ./cwt-cuda-nvcc --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only; \
 				echo "--- CUDA/SCALE-NVIDIA gpus=$$gpus rep=$$rep/$(REPS) ---"; \
-				( source "$(SCALE_ROOT)/bin/scaleenv" sm_$(CUDA_ARCH) && \
+				( source "$(SCALE_ROOT)/bin/scaleenv" "$$sweep_cuda_sm" && \
 				  CWT_IMPL="CUDA / SCALE→NVIDIA" CWT_BACKEND="CUDA" CWT_MACHINE="$$MACHINE" \
 				  ./cwt-cuda-scale-nvidia --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only ); \
 			done; \
@@ -168,7 +170,7 @@ sweep: build
 				CWT_IMPL="HIP / HIPCC" CWT_BACKEND="HIP" CWT_MACHINE="$$MACHINE" \
 				  ./cwt-hip-hipcc --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only; \
 				echo "--- CUDA/SCALE-AMD gpus=$$gpus rep=$$rep/$(REPS) ---"; \
-				( source "$(SCALE_ROOT)/bin/scaleenv" $(HIP_ARCH) && \
+				( source "$(SCALE_ROOT)/bin/scaleenv" "$$sweep_hip_arch" && \
 				  CWT_IMPL="CUDA / SCALE→AMD" CWT_BACKEND="HIP" CWT_MACHINE="$$MACHINE" \
 				  ./cwt-cuda-scale-amd --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only ); \
 			done; \
