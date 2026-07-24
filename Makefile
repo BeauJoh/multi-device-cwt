@@ -27,7 +27,16 @@ REPS        ?= 5
 RESULTS_DIR ?= results
 CSV         ?= $(RESULTS_DIR)/scaling.csv
 
-.PHONY: all build sweep clean clean-results \
+# ------------------------------------------------------------
+# Megaplot: pull the other box's results over ssh and plot both together
+# ------------------------------------------------------------
+
+REMOTE_HOST ?=
+REMOTE_PATH ?= /home/smc/multi-device-cwt
+METRIC      ?= fwd_gflops
+PLOTS_DIR   ?= plots
+
+.PHONY: all build sweep megaplot clean clean-results \
         cwt-cuda-nvcc cwt-hip-hipcc \
         cwt-cuda-scale-nvidia cwt-cuda-scale-amd \
         ensure-scale
@@ -209,6 +218,25 @@ sweep: build
 	echo "==> results appended to $(CSV)"
 
 # ------------------------------------------------------------
+# Megaplot: scp the other box's results/scaling.csv over (both boxes can
+# ssh to each other, same path on both: /home/smc/multi-device-cwt), combine
+# it with this box's own $(CSV), and produce one four-platform comparison
+# chart per GPU count (see plotting/megaplot.py for why it's split by
+# device count rather than one blended chart).
+# ------------------------------------------------------------
+megaplot:
+	@if [ -z "$(REMOTE_HOST)" ]; then \
+		echo "Usage: make megaplot REMOTE_HOST=<ssh alias of the other box>" >&2; \
+		echo "  e.g. from the H100 box:  make megaplot REMOTE_HOST=mi250" >&2; \
+		echo "       from the MI250 box: make megaplot REMOTE_HOST=h100" >&2; \
+		exit 1; \
+	fi
+	@mkdir -p "$(RESULTS_DIR)"
+	scp "$(REMOTE_HOST):$(REMOTE_PATH)/$(CSV)" "$(RESULTS_DIR)/scaling-$(REMOTE_HOST).csv"
+	python3 plotting/megaplot.py "$(CSV)" "$(RESULTS_DIR)/scaling-$(REMOTE_HOST).csv" \
+	  --outdir "$(PLOTS_DIR)" --metric "$(METRIC)" \
+	  --combined-csv "$(RESULTS_DIR)/scaling-combined.csv"
+
 clean:
 	rm -f cwt-cuda-nvcc cwt-hip-hipcc cwt-cuda-scale-nvidia cwt-cuda-scale-amd
 

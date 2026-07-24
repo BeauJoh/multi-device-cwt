@@ -76,8 +76,6 @@ make sweep N=4096 REPS=10
 
 `make clean-results` removes the results directory.
 
-To combine results from both machines into one report figure, copy each box's `results/scaling.csv` back to one place (e.g. concatenate, keeping one header) before plotting.
-
 ## Plotting
 
 `plotting/plot_four_platforms.py` takes a results CSV and produces a grouped bar chart comparing all four implementations (median with IQR error bars), one grouping per machine:
@@ -88,3 +86,21 @@ python3 plotting/plot_four_platforms.py results.csv --outdir plots --metric fwd_
 ```
 
 `--metric` can be `fwd_gflops`, `total_gflops`, `fwd_wall_s`, or `total_wall_s`. Output is written as both `.pdf` and `.png`, plus a `_summary.csv` with the aggregated median/quartile values.
+
+Note: this script medians across every row it's given, so only feed it rows from a single `devices` (GPU count) at a time — see `make megaplot` below, which handles that split automatically.
+
+### Combining results from both machines
+
+The H100 and MI250 boxes can ssh to each other and share the same repo path (`/home/smc/multi-device-cwt`), so `make megaplot` pulls the other box's `results/scaling.csv` over `scp`, combines it with this box's own, and produces one four-platform comparison chart per GPU count (since blending device counts into one median wouldn't be meaningful):
+
+```bash
+# from the H100 box:
+make megaplot REMOTE_HOST=mi250
+
+# from the MI250 box:
+make megaplot REMOTE_HOST=h100
+```
+
+`REMOTE_HOST` should be whatever ssh alias reaches the other box. Override `REMOTE_PATH` if the repo lives somewhere other than `/home/smc/multi-device-cwt` on the remote, and `METRIC`/`PLOTS_DIR` the same way as above. Output goes to `plots/devices-<N>/` per GPU count, with the combined raw CSV at `results/scaling-combined.csv`.
+
+You can also run this by hand for more control — `python3 plotting/megaplot.py <csv1> <csv2> ... --outdir plots --metric fwd_gflops`.
