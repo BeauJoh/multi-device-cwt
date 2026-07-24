@@ -89,6 +89,8 @@ ensure-scale:
 			rm -rf "$$tmpdir"; exit 1; \
 		fi; \
 		extracted="$$(dirname "$$(dirname "$$scaleenv_path")")"; \
+		chmod -R u+rwX,go+rX "$$extracted" 2>/dev/null || true; \
+		find "$$extracted/bin" -maxdepth 1 -type f -exec chmod +x {} \; 2>/dev/null || true; \
 		rm -rf "$(SCALE_ROOT)"; \
 		mv "$$extracted" "$(SCALE_ROOT)"; \
 		rm -rf "$$tmpdir"; \
@@ -96,7 +98,12 @@ ensure-scale:
 		echo "==> Installed SCALE to $(SCALE_ROOT)."; \
 		echo "==> If this is the first install, log out/in (or reboot) so the render/video group membership applies."; \
 	fi
-	@test -x "$(SCALE_ROOT)/bin/scaleenv" || { echo "error: missing SCALE: $(SCALE_ROOT)/bin/scaleenv" >&2; exit 1; }
+	@if [ ! -x "$(SCALE_ROOT)/bin/scaleenv" ]; then \
+		echo "error: missing SCALE: $(SCALE_ROOT)/bin/scaleenv" >&2; \
+		echo "==> debug: contents of $(SCALE_ROOT)/bin (if it exists):" >&2; \
+		ls -la "$(SCALE_ROOT)/bin" >&2 2>&1 || echo "  (no such directory)" >&2; \
+		exit 1; \
+	fi
 
 # ------------------------------------------------------------
 # SCALE builds (same CUDA source, compiled via SCALE's nvcc)
