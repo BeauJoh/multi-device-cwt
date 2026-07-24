@@ -122,14 +122,20 @@ ensure-scale:
 
 # CUDA source built through SCALE, targeting NVIDIA hardware. Resolves arch
 # from the shell env (see cwt-cuda-nvcc comment above for why), not Make's
-# $(CUDA_ARCH). SCALE_CUDA_VERSION, if set in the environment (e.g.
-# `SCALE_CUDA_VERSION=13.1 make cwt-cuda-scale-nvidia`), is picked up
-# automatically since it's a plain env var inherited by this shell.
+# $(CUDA_ARCH). If SCALE_CUDA_PATH is set (setup-backends.sh sets it for
+# hosts where the installed CUDA version is newer than SCALE's clang can
+# parse, e.g. the H100 box: CUDA 13.3 vs SCALE 1.7.2's supported 13.1), it
+# overrides CUDA_PATH just for this build, leaving the native cwt-cuda-nvcc
+# build on the host's regular CUDA_PATH.
 cwt-cuda-scale-nvidia: $(CWT_CUDA_SRC) | ensure-scale
 	. ./setup-backends.sh; \
 	cuda_sm="sm_$${CUDA_DEV_TARGET#sm_}"; \
 	[ "$$cuda_sm" != "sm_" ] || cuda_sm="sm_$(CUDA_ARCH)"; \
 	cuda_compute="$${cuda_sm#sm_}"; \
+	if [ -n "$${SCALE_CUDA_PATH:-}" ]; then \
+		echo "==> overriding CUDA_PATH for SCALE build: $$SCALE_CUDA_PATH"; \
+		export CUDA_PATH="$$SCALE_CUDA_PATH"; \
+	fi; \
 	source "$(SCALE_ROOT)/bin/scaleenv" "$$cuda_sm" && \
 	nvcc \
 	  -gencode arch=compute_$$cuda_compute,code=$$cuda_sm \

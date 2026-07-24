@@ -176,6 +176,11 @@ case "$HOST" in
     export CUDA_DEV_TARGET="sm_90"
     export MACHINE="H100"
     export CUDA_PATH="${CUDA_PATH:-/usr/local/cuda-13.3}"
+    # SCALE 1.7.2's bundled clang can't parse CUDA 13.3's headers
+    # (crt/math_functions.hpp fails to parse under clang 20). CUDA 13.1 is
+    # confirmed to work, so point the SCALE->NVIDIA build at that install
+    # specifically, leaving the native nvcc build on CUDA_PATH (13.3) above.
+    export SCALE_CUDA_PATH="${SCALE_CUDA_PATH:-/usr/local/cuda-13.1}"
     ;;
   smc-AS-4124GQ-TNMI)
     export BACKENDS="hip"
