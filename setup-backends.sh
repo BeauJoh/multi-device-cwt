@@ -157,6 +157,12 @@ case "$HOST" in
     load_module_if_needed "gcc/13.2.0"
     load_module_if_needed "llvm/19.0.1_rc3_70_80_90-offload"
     ;;
+  smc-SYS-122C-TN)
+    export BACKENDS="cuda"
+    export CUDA_DEV_TARGET="sm_90"
+    export MACHINE="H100"
+    export CUDA_PATH="${CUDA_PATH:-/usr/local/cuda-13.3}"
+
   *)
     echo "Unknown system ($HOST)." >&2
     exit 1
