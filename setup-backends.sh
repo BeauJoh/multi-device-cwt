@@ -163,6 +163,12 @@ case "$HOST" in
     export MACHINE="H100"
     export CUDA_PATH="${CUDA_PATH:-/usr/local/cuda-13.3}"
     ;;
+  smc-AS-4124GQ-TNMI)
+    export BACKENDS="hip"
+    export HIP_DEV_TARGET="gfx90a"
+    export MACHINE="MI250"
+    append_ld_library_path "/opt/rocm/llvm/lib"
+    ;;
   *)
     echo "Unknown system ($HOST)." >&2
     exit 1
