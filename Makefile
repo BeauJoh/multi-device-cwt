@@ -17,12 +17,32 @@ HIP_ARCH  ?= gfx908
 
 SCALE_TARBALL_URL ?= https://pkgs.scale-lang.com/tar/scale-latest-amd64.tar.xz
 
-.PHONY: all clean \
+.PHONY: all build clean \
         cwt-cuda-nvcc cwt-hip-hipcc \
         cwt-cuda-scale-nvidia cwt-cuda-scale-amd \
         ensure-scale
 
+# Plain `make` builds only what this host actually supports (per BACKENDS
+# from setup-backends.sh). `make all` always forces every target, useful on
+# a dev box like `zenith` that has both toolchains installed.
+.DEFAULT_GOAL := build
+
 all: cwt-cuda-nvcc cwt-hip-hipcc cwt-cuda-scale-nvidia cwt-cuda-scale-amd
+
+# Build only the targets relevant to this host's BACKENDS (cuda and/or hip),
+# as reported by setup-backends.sh. No need to `source` it first — this
+# sources it itself.
+build:
+	@. ./setup-backends.sh; \
+	targets=""; \
+	if [[ "$$BACKENDS" == *"cuda"* ]]; then targets="$$targets cwt-cuda-nvcc cwt-cuda-scale-nvidia"; fi; \
+	if [[ "$$BACKENDS" == *"hip"* ]]; then targets="$$targets cwt-hip-hipcc cwt-cuda-scale-amd"; fi; \
+	if [ -z "$$targets" ]; then \
+		echo "error: no supported backend found in BACKENDS='$$BACKENDS' (host: $$HOST)" >&2; \
+		exit 1; \
+	fi; \
+	echo "==> $$HOST: BACKENDS=$$BACKENDS -> building:$$targets"; \
+	$(MAKE) $$targets
 
 # ------------------------------------------------------------
 # Native builds

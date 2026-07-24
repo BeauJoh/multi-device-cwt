@@ -27,13 +27,15 @@ A small benchmark for scaling Continuous Wavelet Transforms (CWT) across multipl
 
 ## Building
 
+Just run:
+
 ```bash
-# picks up CUDA_DEV_TARGET / HIP_DEV_TARGET for this host, then builds all 4 binaries
-source ./setup-backends.sh
-make all
+make
 ```
 
-Or build a single target, e.g. `make cwt-cuda-nvcc`.
+This sources `setup-backends.sh` itself, checks `BACKENDS` for the current host, and builds only what's relevant: `cuda` → `cwt-cuda-nvcc` + `cwt-cuda-scale-nvidia`; `hip` → `cwt-hip-hipcc` + `cwt-cuda-scale-amd`; a host with both (e.g. `zenith`) builds all four. No need to `source` anything first.
+
+To force every target regardless of `BACKENDS` (e.g. cross-checking on a dev box), use `make all`. Or build a single target directly, e.g. `make cwt-cuda-nvcc`.
 
 `make clean` removes all four binaries.
 
