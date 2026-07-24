@@ -13,7 +13,7 @@ CUDA_ARCH   ?= $(patsubst sm_%,%,$(CUDA_DEV_TARGET))
 SCALE_ROOT  ?= $(CURDIR)/scale-1.7.2
 
 HIP_HIPCC ?= hipcc
-HIP_ARCH  ?= gfx908
+HIP_ARCH  ?= $(if $(HIP_DEV_TARGET),$(HIP_DEV_TARGET),gfx908)
 
 SCALE_TARBALL_URL ?= https://pkgs.scale-lang.com/tar/scale-1.7.2-amd64.tar.xz
 
@@ -149,8 +149,9 @@ sweep: build
 				CWT_IMPL="CUDA / NVCC" CWT_BACKEND="CUDA" CWT_MACHINE="$$MACHINE" \
 				  ./cwt-cuda-nvcc --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only; \
 				echo "--- CUDA/SCALE-NVIDIA gpus=$$gpus rep=$$rep/$(REPS) ---"; \
-				CWT_IMPL="CUDA / SCALE→NVIDIA" CWT_BACKEND="CUDA" CWT_MACHINE="$$MACHINE" \
-				  ./cwt-cuda-scale-nvidia --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only; \
+				( source "$(SCALE_ROOT)/bin/scaleenv" sm_$(CUDA_ARCH) && \
+				  CWT_IMPL="CUDA / SCALE→NVIDIA" CWT_BACKEND="CUDA" CWT_MACHINE="$$MACHINE" \
+				  ./cwt-cuda-scale-nvidia --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only ); \
 			done; \
 		done; \
 		ran_any=1; \
@@ -167,8 +168,9 @@ sweep: build
 				CWT_IMPL="HIP / HIPCC" CWT_BACKEND="HIP" CWT_MACHINE="$$MACHINE" \
 				  ./cwt-hip-hipcc --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only; \
 				echo "--- CUDA/SCALE-AMD gpus=$$gpus rep=$$rep/$(REPS) ---"; \
-				CWT_IMPL="CUDA / SCALE→AMD" CWT_BACKEND="HIP" CWT_MACHINE="$$MACHINE" \
-				  ./cwt-cuda-scale-amd --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only; \
+				( source "$(SCALE_ROOT)/bin/scaleenv" $(HIP_ARCH) && \
+				  CWT_IMPL="CUDA / SCALE→AMD" CWT_BACKEND="HIP" CWT_MACHINE="$$MACHINE" \
+				  ./cwt-cuda-scale-amd --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only ); \
 			done; \
 		done; \
 		ran_any=1; \
