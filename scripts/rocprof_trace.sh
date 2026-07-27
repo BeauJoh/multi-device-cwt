@@ -10,6 +10,7 @@
 #
 # Usage:
 #   scripts/rocprof_trace.sh <path-to-binary> [binary args...]
+#   LABEL=<fixed-name> scripts/rocprof_trace.sh <path-to-binary> [binary args...]
 #
 # Examples:
 #   scripts/rocprof_trace.sh ./cwt-hip-hipcc      --mode explicit --N 2048  --B 1 --gpus 8 --csv /dev/null --forward-only
@@ -17,11 +18,15 @@
 #   scripts/rocprof_trace.sh ./cwt-cuda-scale-amd --mode explicit --N 2048  --B 1 --gpus 8 --csv /dev/null --forward-only
 #   scripts/rocprof_trace.sh ./cwt-cuda-scale-amd --mode explicit --N 16384 --B 1 --gpus 8 --csv /dev/null --forward-only
 #
-# Output: raw rocprofv3 CSVs under results/rocprof-<timestamp>-<binary>/, plus
-# a rendered plots/rocprof_timeline_<timestamp>-<binary>.pdf/.png Gantt-style
-# figure (one row per GPU agent, one bar per kernel dispatch -- overlapping
-# bars across agents means concurrent execution, a staircase means
-# serialized dispatch).
+# Output: raw rocprofv3 CSVs under results/rocprof-<label>/, plus a rendered
+# plots/rocprof_timeline_<label>.pdf/.png Gantt-style figure (one row per GPU
+# agent, one bar per kernel dispatch -- overlapping bars across agents means
+# concurrent execution, a staircase means serialized dispatch).
+#
+# By default <label> is "<timestamp>-<binary>" (fine for ad hoc exploration).
+# Set LABEL explicitly (e.g. from `make rocprof-timelines`) for a fixed,
+# reproducible filename with no timestamp -- reruns overwrite in place, which
+# is what you want when pulling a fixed set of figures into a paper.
 set -o pipefail  # deliberately no -e: setup-backends.sh/scaleenv rely on
 # non-fatal command failures (e.g. missing `module` binary) being tolerated,
 # same as how GNU Make runs recipe lines without -e by default.
@@ -61,7 +66,12 @@ if [[ "$(basename "$BIN")" == *scale* ]]; then
   source "$SCALE_ROOT/bin/scaleenv" "$scale_arch"
 fi
 
-OUTDIR="results/rocprof-$(date +%Y%m%d-%H%M%S)-$(basename "$BIN")"
+LABEL="${LABEL:-$(date +%Y%m%d-%H%M%S)-$(basename "$BIN")}"
+OUTDIR="results/rocprof-$LABEL"
+# Clean any stale run under this label first so a fixed LABEL truly
+# overwrites in place (rocprofv3 nests output under a hostname/pid
+# subdirectory each run, so old files would otherwise just accumulate).
+rm -rf "$OUTDIR"
 mkdir -p "$OUTDIR"
 
 rocprofv3 \
@@ -85,7 +95,6 @@ echo "==> raw trace CSVs written under $OUTDIR"
 # if it exists, otherwise fall back to system python3.
 PLOT_PY="$(pwd)/.venv-plots/bin/python3"
 [ -x "$PLOT_PY" ] || PLOT_PY="python3"
-LABEL="$(basename "$OUTDIR")"
 
 if "$PLOT_PY" plotting/plot_rocprof_timeline.py "$OUTDIR" --outdir plots --label "$LABEL"; then
   echo "==> timeline figure: plots/rocprof_timeline_${LABEL}.pdf / .png"

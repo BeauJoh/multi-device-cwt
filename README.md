@@ -149,24 +149,39 @@ You can also run this by hand for more control — `.venv-plots/bin/python3 plot
 
 For a lower-level, device-side view of whether multi-GPU dispatch is actually
 concurrent (as opposed to the host-side `##DEVICE_TIMELINE` polling
-instrumentation in `cwt_hip.cpp`/`cwt_cuda.cu`), `scripts/rocprof_trace.sh`
-wraps any of this project's binaries with `rocprofv3` (AMD ROCm's
-ROCprofiler-SDK CLI), with no source changes required:
+instrumentation in `cwt_hip.cpp`/`cwt_cuda.cu`):
 
 ```bash
-scripts/rocprof_trace.sh ./cwt-hip-hipcc      --mode explicit --N 2048  --B 1 --gpus 8 --csv /dev/null --forward-only
-scripts/rocprof_trace.sh ./cwt-hip-hipcc      --mode explicit --N 16384 --B 1 --gpus 8 --csv /dev/null --forward-only
+make rocprof-timelines
 ```
 
-This writes rocprofv3's raw CSVs (kernel dispatch, HIP API, memory copy
-traces, each with real device-side timestamps) under
-`results/rocprof-<timestamp>-<binary>/`, then automatically renders a static
-Gantt-style figure at `plots/rocprof_timeline_<timestamp>-<binary>.pdf`/`.png`
-via `plotting/plot_rocprof_timeline.py` — one row per GPU agent, one bar
-per kernel dispatch. Overlapping bars across agents mean genuinely
-concurrent execution; a staircase of non-overlapping bars means the
-dispatch is effectively serialized. No Perfetto install/UI needed, though
-the CSVs can also be converted to `.pftrace` and opened at
+Runs on the AMD (HIP) box only. For each `N` in `ROCPROF_SIZES` (default
+`2048 16384`, i.e. the anomalous small size and a large fixed-scaling size),
+this wraps both `cwt-hip-hipcc` and `cwt-cuda-scale-amd` with `rocprofv3`
+(AMD ROCm's ROCprofiler-SDK CLI, no source changes required) at
+`--gpus $(ROCPROF_GPUS)` (default 8), and renders a static Gantt-style
+timeline figure for each run to a **fixed filename** (no timestamp, so
+reruns just overwrite in place and the paths are stable to reference from
+the white paper):
+
+```
+plots/rocprof_timeline_hip-hipcc-N2048.pdf   / .png
+plots/rocprof_timeline_hip-hipcc-N16384.pdf  / .png
+plots/rocprof_timeline_scale-amd-N2048.pdf   / .png
+plots/rocprof_timeline_scale-amd-N16384.pdf  / .png
+```
+
+Each figure has one row per GPU agent and one bar per kernel dispatch.
+Overlapping bars across agents mean genuinely concurrent execution; a
+staircase of non-overlapping bars means the dispatch is effectively
+serialized. No Perfetto install/UI needed.
+
+Under the hood this is `scripts/rocprof_trace.sh <binary> <args...>`, which
+you can also run directly for one-off traces of any binary/args (raw CSVs
+land under `results/rocprof-<label>/`, where `<label>` defaults to a
+timestamp unless you set `LABEL=` yourself, e.g. `LABEL=my-run
+scripts/rocprof_trace.sh ./cwt-hip-hipcc ...`). The CSVs can also be
+converted to `.pftrace` and opened at
 [ui.perfetto.dev](https://ui.perfetto.dev) for interactive drill-down if you
 want it (`rocprofv3 --output-format pftrace ...`).
 
