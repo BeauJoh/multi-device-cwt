@@ -144,27 +144,3 @@ Run the same command (with the appropriate alias) from either side. `REMOTE_HOST
 `make megaplot` installs `pandas`/`matplotlib` itself the first time, into a local venv at `.venv-plots` (no system pip access needed, and it won't touch any other Python on the box). `make clean-plot-deps` removes that venv if you ever want it rebuilt.
 
 You can also run this by hand for more control — `.venv-plots/bin/python3 plotting/megaplot.py <csv1> <csv2> ... --outdir plots --metric fwd_gflops`.
-
-## Device-level profiling with rocprofv3
-
-For a lower-level, device-side view of whether multi-GPU dispatch is actually
-concurrent (as opposed to the host-side `##DEVICE_TIMELINE` polling
-instrumentation in `cwt_hip.cpp`/`cwt_cuda.cu`), `scripts/rocprof_trace.sh`
-wraps any of this project's binaries with `rocprofv3` (AMD ROCm's
-ROCprofiler-SDK CLI), with no source changes required:
-
-```bash
-scripts/rocprof_trace.sh ./cwt-hip-hipcc      --mode explicit --N 2048  --B 1 --gpus 8 --csv /dev/null --forward-only
-scripts/rocprof_trace.sh ./cwt-hip-hipcc      --mode explicit --N 16384 --B 1 --gpus 8 --csv /dev/null --forward-only
-```
-
-This produces a `.pftrace` file under `results/rocprof-<timestamp>-<binary>/`
-that can be opened directly at [ui.perfetto.dev](https://ui.perfetto.dev). Each
-GPU shows up as its own track of kernel-dispatch intervals (with real
-device-side timestamps, not host polling): overlapping intervals across
-devices mean genuinely concurrent execution, a staircase of non-overlapping
-intervals means the dispatch is effectively serialized.
-
-Requires `/opt/rocm/bin` on `PATH` (the script exports this itself) and only
-runs on the AMD box — there's no CUDA equivalent needed here since the
-question under investigation is specific to the HIP/HIPCC scaling anomaly.
