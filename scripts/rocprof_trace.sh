@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Generate a rocprofv3 kernel-dispatch trace for one run of a multi-device-cwt
-# binary, with no source changes required, and render it as a static
-# per-GPU timeline figure -- no Perfetto UI/install needed.
+# Generate a Perfetto-viewable rocprofv3 trace for one run of a multi-device-cwt
+# binary, with no source changes required.
 #
 # rocprofv3 (part of ROCm's ROCprofiler-SDK) records genuine device-side
 # kernel-dispatch timestamps per GPU agent, which is stronger evidence of
@@ -17,11 +16,8 @@
 #   scripts/rocprof_trace.sh ./cwt-cuda-scale-amd --mode explicit --N 2048  --B 1 --gpus 8 --csv /dev/null --forward-only
 #   scripts/rocprof_trace.sh ./cwt-cuda-scale-amd --mode explicit --N 16384 --B 1 --gpus 8 --csv /dev/null --forward-only
 #
-# Output: raw rocprofv3 CSVs under results/rocprof-<timestamp>-<binary>/, plus
-# a rendered plots/rocprof_timeline_<timestamp>-<binary>.pdf/.png Gantt-style
-# figure (one row per GPU agent, one bar per kernel dispatch -- overlapping
-# bars across agents means concurrent execution, a staircase means
-# serialized dispatch).
+# Output: a .pftrace file under results/rocprof-<timestamp>-<binary>/ that you
+# can drag-and-drop at https://ui.perfetto.dev
 set -o pipefail  # deliberately no -e: setup-backends.sh/scaleenv rely on
 # non-fatal command failures (e.g. missing `module` binary) being tolerated,
 # same as how GNU Make runs recipe lines without -e by default.
@@ -68,7 +64,7 @@ rocprofv3 \
   --kernel-trace \
   --hip-trace \
   --memory-copy-trace \
-  --output-format csv \
+  --output-format pftrace \
   -d "$OUTDIR" \
   -- "$BIN" "$@"
 status=$?
@@ -78,17 +74,6 @@ if [ "$status" -ne 0 ]; then
   exit "$status"
 fi
 
-echo "==> raw trace CSVs written under $OUTDIR"
-
-# Render the static timeline figure automatically -- reuse this project's
-# own plotting venv (bootstrapped by `make megaplot`/`make ensure-plot-deps`)
-# if it exists, otherwise fall back to system python3.
-PLOT_PY="$(pwd)/.venv-plots/bin/python3"
-[ -x "$PLOT_PY" ] || PLOT_PY="python3"
-LABEL="$(basename "$OUTDIR")"
-
-if "$PLOT_PY" plotting/plot_rocprof_timeline.py "$OUTDIR" --outdir plots --label "$LABEL"; then
-  echo "==> timeline figure: plots/rocprof_timeline_${LABEL}.pdf / .png"
-else
-  echo "warning: timeline plotting failed -- raw CSVs are still under $OUTDIR for manual inspection" >&2
-fi
+echo "==> trace written under $OUTDIR"
+echo "==> open the .pftrace file at https://ui.perfetto.dev and look at the per-Agent"
+echo "    kernel-dispatch tracks: overlapping intervals = concurrent, staircase = serial"

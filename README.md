@@ -158,24 +158,13 @@ scripts/rocprof_trace.sh ./cwt-hip-hipcc      --mode explicit --N 2048  --B 1 --
 scripts/rocprof_trace.sh ./cwt-hip-hipcc      --mode explicit --N 16384 --B 1 --gpus 8 --csv /dev/null --forward-only
 ```
 
-This writes rocprofv3's raw CSVs (kernel dispatch, HIP API, memory copy
-traces, each with real device-side timestamps) under
-`results/rocprof-<timestamp>-<binary>/`, then automatically renders a static
-Gantt-style figure at `plots/rocprof_timeline_<timestamp>-<binary>.pdf`/`.png`
-via `plotting/plot_rocprof_timeline.py` — one row per GPU agent, one bar
-per kernel dispatch. Overlapping bars across agents mean genuinely
-concurrent execution; a staircase of non-overlapping bars means the
-dispatch is effectively serialized. No Perfetto install/UI needed, though
-the CSVs can also be converted to `.pftrace` and opened at
-[ui.perfetto.dev](https://ui.perfetto.dev) for interactive drill-down if you
-want it (`rocprofv3 --output-format pftrace ...`).
+This produces a `.pftrace` file under `results/rocprof-<timestamp>-<binary>/`
+that can be opened directly at [ui.perfetto.dev](https://ui.perfetto.dev). Each
+GPU shows up as its own track of kernel-dispatch intervals (with real
+device-side timestamps, not host polling): overlapping intervals across
+devices mean genuinely concurrent execution, a staircase of non-overlapping
+intervals means the dispatch is effectively serialized.
 
-Requires `/opt/rocm/bin` on `PATH` and the `hsa-amd-aqlprofile` package
-installed (`sudo apt-get install hsa-amd-aqlprofile` if you hit
-`libhsa-amd-aqlprofile64.so.1: cannot open shared object file`); the script
-exports `PATH`/`LD_LIBRARY_PATH` itself but can't install missing packages.
-Figure rendering reuses the `.venv-plots` bootstrapped by `make
-megaplot`/`make ensure-plot-deps`, falling back to system `python3` if that
-venv doesn't exist yet. Only runs on the AMD box — there's no CUDA
-equivalent needed here since the question under investigation is specific
-to the HIP/HIPCC scaling anomaly.
+Requires `/opt/rocm/bin` on `PATH` (the script exports this itself) and only
+runs on the AMD box — there's no CUDA equivalent needed here since the
+question under investigation is specific to the HIP/HIPCC scaling anomaly.
