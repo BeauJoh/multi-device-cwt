@@ -215,7 +215,14 @@ sweep: build
 	if [ "$$ran_any" -eq 0 ]; then \
 		echo "error: no supported backend found in BACKENDS='$$BACKENDS' (host: $$HOST)" >&2; exit 1; \
 	fi; \
-	echo "==> results appended to $(CSV)"
+	echo "==> results appended to $(CSV)"; \
+	if [ -n "$${REMOTE_HOST:-}" ]; then \
+		echo "==> auto-running megaplot against $$REMOTE_HOST"; \
+		$(MAKE) megaplot REMOTE_HOST="$$REMOTE_HOST" || \
+			echo "warning: megaplot failed (other box may not have swept yet) -- run 'make megaplot REMOTE_HOST=$$REMOTE_HOST' manually once it has" >&2; \
+	else \
+		echo "==> REMOTE_HOST not set (see setup-backends.sh) -- skipping megaplot; run 'make megaplot REMOTE_HOST=<other box>' manually"; \
+	fi
 
 # ------------------------------------------------------------
 # Plotting deps: pandas/matplotlib, in their own venv so this doesn't need

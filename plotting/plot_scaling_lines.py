@@ -68,6 +68,10 @@ def style_for(impl):
         "color": darken(base) if is_scale else base,
         "linestyle": "--" if is_scale else "-",
         "marker": "s" if is_scale else "o",
+        # Native's circle marker is drawn on top of SCALE's square where
+        # they coincide (zorder, not draw order, so this doesn't affect
+        # legend ordering, which follows the ax.plot() call sequence below).
+        "zorder": 3 if not is_scale else 2,
     }
 
 
@@ -100,6 +104,7 @@ def plot_metric(df, metric, ylabel, title, out_stem, outdir):
         ax.fill_between(
             agg["devices"], agg["q25"], agg["q75"],
             color=style["color"], alpha=0.18, linewidth=0,
+            zorder=1,
         )
         plotted = True
 

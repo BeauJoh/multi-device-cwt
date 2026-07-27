@@ -60,6 +60,20 @@ for bin in cwt-cuda-nvcc cwt-hip-hipcc cwt-cuda-scale-nvidia cwt-cuda-scale-amd;
 done
 ```
 
+### Per-device timeline diagnostic
+
+Every run also prints one `##DEVICE_TIMELINE` line per device to stdout, e.g.:
+
+```
+##DEVICE_TIMELINE impl="HIP / HIPCC" machine="MI250" gpus=8 device=0 launch_ms=0.12 done_ms=42.87
+##DEVICE_TIMELINE impl="HIP / HIPCC" machine="MI250" gpus=8 device=1 launch_ms=0.31 done_ms=85.02
+...
+```
+
+`launch_ms` is the host-side wall-clock offset (from the start of the timed region) at which that device's kernel was enqueued; `done_ms` is the offset at which that device's stream was observed to finish (via a non-blocking, round-robin `hipStreamQuery`/`cudaStreamQuery` poll, not a blind in-order synchronize, so waiting on device 0 can't mask overlap or serialization on the other devices). If `launch_ms` is close together across devices but `done_ms` comes back staggered by roughly one device's worth of compute time each (a "staircase"), that's direct evidence the devices are executing serially rather than concurrently, regardless of what the aggregate wall time / GFLOP/s numbers suggest.
+
+Buffer allocation for each task's output (`d_out`) also happens before the timed region now (previously it was allocated per-task inside the loop, interleaved with device switches — allocator overhead scaling with `--gpus` even as each task's chunk of work shrinks could itself explain part of a "more GPUs look slower" result that has nothing to do with the kernel).
+
 ## Sweeping
 
 ```bash
@@ -75,6 +89,8 @@ make sweep N=4096 REPS=10
 ```
 
 `make clean-results` removes the results directory.
+
+`make sweep` also auto-runs `make megaplot` at the end, using the `REMOTE_HOST` default set per host in `setup-backends.sh` (`mi250` from the H100 box, `h100` from the MI250 box) — so a plain `make sweep` on either box both collects results and refreshes the combined plots against whatever the other box last swept. If the other box hasn't swept yet (or its results.csv isn't there), this step just warns and skips rather than failing the sweep; rerun `make megaplot REMOTE_HOST=<...>` by hand once both sides are done. Override with `make sweep REMOTE_HOST=<other-alias>` or unset it to skip.
 
 ## Plotting
 

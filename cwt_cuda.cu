@@ -235,7 +235,35 @@ int main(int argc, char** argv) {
 
   std::vector<real_t*> d_out(tasks.size(), nullptr);
 
+  // Pre-allocate all output buffers before the timed region starts.
+  // cudaMalloc is a synchronous, blocking call; doing this inside the
+  // timed loop (interleaved with cudaSetDevice() switches across devices)
+  // would count allocator overhead as if it were compute/transfer time,
+  // and that overhead is paid once per task -- i.e. it scales up with
+  // --gpus even though each task's chunk of work is shrinking, which can
+  // make more GPUs look slower for reasons that have nothing to do with
+  // the actual kernel. Matches the pattern already used for
+  // d_fx/d_scales/d_trans.
+  for (int i = 0; i < int(tasks.size()); ++i) {
+    int w = (args.mode == "single") ? 0 : (i % physical_workers);
+    CUDA_CHECK(cudaSetDevice(w));
+    int a_count = tasks[i].a1 - tasks[i].a0;
+    CUDA_CHECK(cudaMalloc(&d_out[i], sizeof(real_t) * B * a_count * N));
+  }
+
+  // Per-device diagnostic timestamps (ms since t0). If launch_ms ends up
+  // close together across devices but done_ms comes back staggered by
+  // roughly one device's worth of compute time each, that's direct
+  // evidence the devices aren't actually executing concurrently.
+  std::vector<double> launch_ms(physical_workers, -1.0);
+  std::vector<double> done_ms(physical_workers, -1.0);
+
   auto t0 = std::chrono::steady_clock::now();
+  auto ms_since_t0 = [&]() {
+    return std::chrono::duration<double, std::milli>(
+               std::chrono::steady_clock::now() - t0)
+        .count();
+  };
 
   for (int i = 0; i < int(tasks.size()); ++i) {
     int w = (args.mode == "single") ? 0 : (i % physical_workers);
@@ -245,14 +273,13 @@ int main(int argc, char** argv) {
     int a1 = tasks[i].a1;
     int a_count = a1 - a0;
 
-    CUDA_CHECK(cudaMalloc(&d_out[i], sizeof(real_t) * B * a_count * N));
-
     dim3 block(128);
     dim3 grid((N + block.x - 1) / block.x, a_count, B);
 
     cwt_forward_kernel<<<grid, block, 0, streams[w]>>>(
         d_fx[w], d_scales[w], d_trans[w], d_out[i], B, N, a0, a_count);
     CUDA_CHECK(cudaGetLastError());
+    launch_ms[w] = ms_since_t0();
   }
 
   for (int i = 0; i < int(tasks.size()); ++i) {
@@ -272,13 +299,46 @@ int main(int argc, char** argv) {
         streams[w]));
   }
 
-  for (int w = 0; w < physical_workers; ++w) {
-    CUDA_CHECK(cudaSetDevice(w));
-    CUDA_CHECK(cudaStreamSynchronize(streams[w]));
+  // Busy-poll each device's stream instead of a blind, in-order
+  // synchronize, so we can record the wall-clock offset at which each
+  // device actually finishes. Waiting on device 0 to completion before
+  // even checking device 1 would itself hide overlap/serialization on the
+  // measurement side; round-robin polling with a non-blocking query
+  // avoids that.
+  {
+    std::vector<bool> dev_done(physical_workers, false);
+    int remaining = physical_workers;
+    while (remaining > 0) {
+      for (int w = 0; w < physical_workers; ++w) {
+        if (dev_done[w]) continue;
+        CUDA_CHECK(cudaSetDevice(w));
+        cudaError_t st = cudaStreamQuery(streams[w]);
+        if (st == cudaSuccess) {
+          dev_done[w] = true;
+          done_ms[w] = ms_since_t0();
+          --remaining;
+        } else if (st != cudaErrorNotReady) {
+          CUDA_CHECK(st);
+        }
+      }
+    }
   }
 
   auto t1 = std::chrono::steady_clock::now();
   double fwd_s = std::chrono::duration<double>(t1 - t0).count();
+
+  {
+    std::string impl_for_timeline = getenv_s("CWT_IMPL", "CUDA");
+    std::string machine_for_timeline = getenv_s("CWT_MACHINE", "UnknownMachine");
+    for (int w = 0; w < physical_workers; ++w) {
+      std::cout << "##DEVICE_TIMELINE impl=\"" << impl_for_timeline
+                << "\" machine=\"" << machine_for_timeline << "\""
+                << " gpus=" << physical_workers
+                << " device=" << w
+                << " launch_ms=" << launch_ms[w]
+                << " done_ms=" << done_ms[w] << "\n";
+    }
+  }
 
   for (int i = 0; i < int(tasks.size()); ++i) {
     int w = (args.mode == "single") ? 0 : (i % physical_workers);

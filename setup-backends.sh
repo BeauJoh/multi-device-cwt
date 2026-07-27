@@ -181,6 +181,9 @@ case "$HOST" in
     # confirmed to work, so point the SCALE->NVIDIA build at that install
     # specifically, leaving the native nvcc build on CUDA_PATH (13.3) above.
     export SCALE_CUDA_PATH="${SCALE_CUDA_PATH:-/usr/local/cuda-13.1}"
+    # ssh alias for the other multi-device-cwt box, so `make sweep` can
+    # auto-run `make megaplot` afterwards.
+    export REMOTE_HOST="${REMOTE_HOST:-mi250}"
     ;;
   smc-AS-4124GQ-TNMI)
     export BACKENDS="hip"
@@ -188,6 +191,9 @@ case "$HOST" in
     export MACHINE="MI250"
     export ROCM_PATH="${ROCM_PATH:-/opt/rocm}"
     append_ld_library_path "/opt/rocm/llvm/lib"
+    # ssh alias for the other multi-device-cwt box, so `make sweep` can
+    # auto-run `make megaplot` afterwards.
+    export REMOTE_HOST="${REMOTE_HOST:-h100}"
     ;;
   *)
     echo "Unknown system ($HOST)." >&2
