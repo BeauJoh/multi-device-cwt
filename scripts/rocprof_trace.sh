@@ -18,9 +18,7 @@
 #
 # Output: a .pftrace file under results/rocprof-<timestamp>-<binary>/ that you
 # can drag-and-drop at https://ui.perfetto.dev
-set -o pipefail  # deliberately no -e: setup-backends.sh/scaleenv rely on
-# non-fatal command failures (e.g. missing `module` binary) being tolerated,
-# same as how GNU Make runs recipe lines without -e by default.
+set -eo pipefail  # no -u: setup-backends.sh/scaleenv are not nounset-clean
 
 cd "$(dirname "$0")/.."
 
@@ -67,12 +65,6 @@ rocprofv3 \
   --output-format pftrace \
   -d "$OUTDIR" \
   -- "$BIN" "$@"
-status=$?
-
-if [ "$status" -ne 0 ]; then
-  echo "error: rocprofv3 exited with status $status -- see output above" >&2
-  exit "$status"
-fi
 
 echo "==> trace written under $OUTDIR"
 echo "==> open the .pftrace file at https://ui.perfetto.dev and look at the per-Agent"
