@@ -92,6 +92,16 @@ make sweep N=4096 REPS=10
 
 `make sweep` also auto-runs `make megaplot` at the end, using the `REMOTE_HOST` default set per host in `setup-backends.sh` (`mi250` from the H100 box, `h100` from the MI250 box) — so a plain `make sweep` on either box both collects results and refreshes the combined plots against whatever the other box last swept. If the other box hasn't swept yet (or its results.csv isn't there), this step just warns and skips rather than failing the sweep; rerun `make megaplot REMOTE_HOST=<...>` by hand once both sides are done. Override with `make sweep REMOTE_HOST=<other-alias>` or unset it to skip.
 
+### Sweeping across problem sizes
+
+```bash
+make sweep-sizes
+```
+
+Runs `make sweep` once per size in `SIZES` (default `2048 4096 8192 16384`), appending every size to the same CSV, then runs `megaplot` once at the end (not once per size). Useful for checking whether an effect (e.g. an implementation getting relatively worse with more GPUs) is a small-problem-size artifact — fixed per-device overhead (kernel launch, allocator, device-context switches) that matters less as each GPU's chunk of real work grows.
+
+Forward CWT cost is `O(B*N^3)` (the number of scales `A` is set to `N`, and the kernel is `O(A*N*N)` per batch element), so doubling `N` is roughly an 8x increase in total compute — this ladder gets slow fast. `N=16384` alone can take tens of minutes on the MI250 leg at `REPS=5`; go to `32768` (`make sweep-sizes SIZES="2048 4096 8192 16384 32768"`) only if you've got the time budget, and consider a lower `REPS` for it, e.g. `make sweep N=32768 REPS=2 SKIP_MEGAPLOT=1` run by hand.
+
 ## Plotting
 
 `plotting/plot_four_platforms.py` takes a results CSV and produces a grouped bar chart comparing all four implementations (median with IQR error bars), one grouping per machine:
@@ -111,11 +121,19 @@ Note: this script medians across every row it's given, so only feed it rows from
 python3 plotting/plot_scaling_lines.py results/scaling-combined.csv --outdir plots
 ```
 
-NVIDIA-targeting and AMD-targeting implementations keep their platform colour (NVIDIA green / AMD red) in both charts. Within each colour, native (`CUDA / NVCC`, `HIP / HIPCC`) is a solid line with a circle marker, and the corresponding SCALE build (`CUDA / SCALE→NVIDIA`, `CUDA / SCALE→AMD`) is a darker shade of the same colour, dashed, with a square marker — so native vs SCALE is easy to tell apart at a glance even across two different colour families. The H100 box only has one GPU, so its two series just show as a single point at devices=1, which is expected. `--gflops-metric`/`--time-metric` pick which columns to plot (`fwd_*` by default, or `total_*`).
+NVIDIA-targeting and AMD-targeting implementations keep their platform colour (NVIDIA green / AMD red) in both charts. Within each colour, native (`CUDA / NVCC`, `HIP / HIPCC`) is a solid line with a circle marker, and the corresponding SCALE build (`CUDA / SCALE→NVIDIA`, `CUDA / SCALE→AMD`) is a darker shade of the same colour, dashed, with a square marker — so native vs SCALE is easy to tell apart at a glance even across two different colour families, and native's circle is drawn on top where the two coincide. The H100 box only has one GPU, so its two series just show as a single point at devices=1, which is expected. `--gflops-metric`/`--time-metric` pick which columns to plot (`fwd_*` by default, or `total_*`).
+
+`plotting/plot_vs_problem_size.py` plots the opposite axis — GFLOP/s and wall time vs problem size `N` (log2 x-axis), for a results CSV spanning multiple sizes (i.e. from `make sweep-sizes`):
+
+```bash
+python3 plotting/plot_vs_problem_size.py results/scaling-combined.csv --outdir plots
+```
+
+Same colour/style scheme as the GPU-count line charts. Each series is plotted at its own largest swept GPU count (so `CUDA / NVCC`/`CUDA / SCALE→NVIDIA` use devices=1 on the single-GPU H100 box, `HIP / HIPCC`/`CUDA / SCALE→AMD` use devices=8 on the MI250 box), which is the relevant comparison for checking whether a GPU-count effect is really a small-problem-size overhead artifact: if the gap between native and SCALE (or the "more GPUs is worse" slope) narrows or flattens as `N` grows, that's the signature of fixed per-device overhead losing significance relative to a growing amount of real compute per device. Only produced when the CSV has more than one distinct `N` (a single-size CSV is skipped, not an error).
 
 ### Combining results from both machines
 
-The H100 and MI250 boxes can ssh to each other and share the same repo path (`/home/smc/multi-device-cwt`), so `make megaplot` pulls the other box's `results/scaling.csv` over `scp`, combines it with this box's own, and produces both the per-GPU-count bar charts above and the two scaling line charts:
+The H100 and MI250 boxes can ssh to each other and share the same repo path (`/home/smc/multi-device-cwt`), so `make megaplot` pulls the other box's `results/scaling.csv` over `scp`, combines it with this box's own, and produces the per-GPU-count bar charts, the two scaling-vs-GPU-count line charts, and (if more than one problem size is present) the two scaling-vs-N line charts:
 
 ```bash
 # from the H100 box:
@@ -125,7 +143,7 @@ make megaplot REMOTE_HOST=mi250
 make megaplot REMOTE_HOST=h100
 ```
 
-`REMOTE_HOST` should be whatever ssh alias reaches the other box. Override `REMOTE_PATH` if the repo lives somewhere other than `/home/smc/multi-device-cwt` on the remote, and `METRIC`/`PLOTS_DIR` the same way as above. Output goes to `plots/devices-<N>/` per GPU count, with the combined raw CSV at `results/scaling-combined.csv`.
+`REMOTE_HOST` should be whatever ssh alias reaches the other box. Override `REMOTE_PATH` if the repo lives somewhere other than `/home/smc/multi-device-cwt` on the remote, and `METRIC`/`PLOTS_DIR` the same way as above. Output is split by problem size first (`plots/N-<n>/...`, skipped if there's only one size), then by GPU count within each size (`plots/N-<n>/devices-<d>/...`, same skip rule); the vs-N charts land directly under `plots/`. Combined raw CSV is written to `results/scaling-combined.csv`.
 
 `make megaplot` installs `pandas`/`matplotlib` itself the first time, into a local venv at `.venv-plots` (no system pip access needed, and it won't touch any other Python on the box). `make clean-plot-deps` removes that venv if you ever want it rebuilt.
 

@@ -27,6 +27,14 @@ REPS        ?= 5
 RESULTS_DIR ?= results
 CSV         ?= $(RESULTS_DIR)/scaling.csv
 
+# Problem sizes for `make sweep-sizes` (a full 1..gpus x REPS sweep at each
+# N, appended to the same CSV). Forward CWT cost is O(B*N^3) (A=N, and the
+# kernel is O(A*N*N) per batch element) -- doubling N is roughly an 8x
+# increase in total compute, so this ladder gets slow fast. 16384 alone can
+# take tens of minutes on the MI250 leg; add 32768 yourself (and consider
+# a lower REPS for it) only if you've got the time budget for it.
+SIZES ?= 2048 4096 8192 16384
+
 # ------------------------------------------------------------
 # Megaplot: pull the other box's results over ssh and plot both together
 # ------------------------------------------------------------
@@ -36,7 +44,7 @@ REMOTE_PATH ?= /home/smc/multi-device-cwt
 METRIC      ?= fwd_gflops
 PLOTS_DIR   ?= plots
 
-.PHONY: all build sweep megaplot clean clean-results clean-plot-deps \
+.PHONY: all build sweep sweep-sizes megaplot clean clean-results clean-plot-deps \
         cwt-cuda-nvcc cwt-hip-hipcc \
         cwt-cuda-scale-nvidia cwt-cuda-scale-amd \
         ensure-scale ensure-plot-deps
@@ -216,6 +224,30 @@ sweep: build
 		echo "error: no supported backend found in BACKENDS='$$BACKENDS' (host: $$HOST)" >&2; exit 1; \
 	fi; \
 	echo "==> results appended to $(CSV)"; \
+	if [ -n "$${SKIP_MEGAPLOT:-}" ]; then \
+		echo "==> SKIP_MEGAPLOT set -- not auto-running megaplot for this size"; \
+	elif [ -n "$${REMOTE_HOST:-}" ]; then \
+		echo "==> auto-running megaplot against $$REMOTE_HOST"; \
+		$(MAKE) megaplot REMOTE_HOST="$$REMOTE_HOST" || \
+			echo "warning: megaplot failed (other box may not have swept yet) -- run 'make megaplot REMOTE_HOST=$$REMOTE_HOST' manually once it has" >&2; \
+	else \
+		echo "==> REMOTE_HOST not set (see setup-backends.sh) -- skipping megaplot; run 'make megaplot REMOTE_HOST=<other box>' manually"; \
+	fi
+
+# ------------------------------------------------------------
+# Sweep across multiple problem sizes (see SIZES above), appending every
+# size to the same CSV, then running megaplot once at the end (megaplot
+# facets by N automatically -- see plotting/megaplot.py) instead of once
+# per size.
+# ------------------------------------------------------------
+sweep-sizes:
+	@. ./setup-backends.sh; \
+	for n in $(SIZES); do \
+		echo "==================================================================="; \
+		echo "==> sweep-sizes: N=$$n"; \
+		echo "==================================================================="; \
+		SKIP_MEGAPLOT=1 $(MAKE) sweep N="$$n" REPS=$(REPS) CSV="$(CSV)" || exit 1; \
+	done; \
 	if [ -n "$${REMOTE_HOST:-}" ]; then \
 		echo "==> auto-running megaplot against $$REMOTE_HOST"; \
 		$(MAKE) megaplot REMOTE_HOST="$$REMOTE_HOST" || \
