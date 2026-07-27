@@ -227,9 +227,28 @@ PLOT_VENV ?= $(CURDIR)/.venv-plots
 PLOT_PY   := $(PLOT_VENV)/bin/python3
 
 ensure-plot-deps:
-	@if [ ! -x "$(PLOT_PY)" ]; then \
-		echo "==> creating plotting venv at $(PLOT_VENV)"; \
-		python3 -m venv "$(PLOT_VENV)"; \
+	@if [ ! -x "$(PLOT_VENV)/bin/pip" ]; then \
+		if [ ! -d "$(PLOT_VENV)" ]; then \
+			echo "==> creating plotting venv at $(PLOT_VENV)"; \
+			python3 -m venv "$(PLOT_VENV)" 2>&1 | sed 's/^/    /' || true; \
+		fi; \
+		if [ ! -x "$(PLOT_VENV)/bin/pip" ]; then \
+			echo "==> venv has no pip (Debian/Ubuntu split ensurepip's wheels into the"; \
+			echo "    python3-venv apt package) -- installing it and recreating the venv"; \
+			if sudo apt-get update -qq 2>/dev/null && sudo apt-get install -y -qq python3-venv 2>/dev/null; then \
+				rm -rf "$(PLOT_VENV)"; \
+				python3 -m venv "$(PLOT_VENV)"; \
+			fi; \
+		fi; \
+	fi
+	@if [ ! -x "$(PLOT_VENV)/bin/pip" ]; then \
+		echo "==> still no pip in the venv; trying ensurepip directly" ; \
+		"$(PLOT_PY)" -m ensurepip --upgrade 2>&1 | sed 's/^/    /' || true; \
+	fi
+	@if [ ! -x "$(PLOT_VENV)/bin/pip" ]; then \
+		echo "error: $(PLOT_VENV) still has no pip." >&2; \
+		echo "  Run manually: sudo apt-get install -y python3-venv && make clean-plot-deps megaplot ..." >&2; \
+		exit 1; \
 	fi
 	@if ! "$(PLOT_PY)" -c "import pandas, matplotlib" >/dev/null 2>&1; then \
 		echo "==> installing pandas + matplotlib into $(PLOT_VENV)"; \

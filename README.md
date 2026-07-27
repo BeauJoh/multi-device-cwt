@@ -89,9 +89,17 @@ python3 plotting/plot_four_platforms.py results.csv --outdir plots --metric fwd_
 
 Note: this script medians across every row it's given, so only feed it rows from a single `devices` (GPU count) at a time — see `make megaplot` below, which handles that split automatically.
 
+`plotting/plot_scaling_lines.py` instead plots the full 1..8 GPU sweep as line charts — median line with an IQR ribbon, GPU count on the x-axis — one chart for GFLOP/s and one for wall time:
+
+```bash
+python3 plotting/plot_scaling_lines.py results/scaling-combined.csv --outdir plots
+```
+
+NVIDIA-targeting and AMD-targeting implementations keep their platform colour (NVIDIA green / AMD red) in both charts. Within each colour, native (`CUDA / NVCC`, `HIP / HIPCC`) is a solid line with a circle marker, and the corresponding SCALE build (`CUDA / SCALE→NVIDIA`, `CUDA / SCALE→AMD`) is a darker shade of the same colour, dashed, with a square marker — so native vs SCALE is easy to tell apart at a glance even across two different colour families. The H100 box only has one GPU, so its two series just show as a single point at devices=1, which is expected. `--gflops-metric`/`--time-metric` pick which columns to plot (`fwd_*` by default, or `total_*`).
+
 ### Combining results from both machines
 
-The H100 and MI250 boxes can ssh to each other and share the same repo path (`/home/smc/multi-device-cwt`), so `make megaplot` pulls the other box's `results/scaling.csv` over `scp`, combines it with this box's own, and produces one four-platform comparison chart per GPU count (since blending device counts into one median wouldn't be meaningful):
+The H100 and MI250 boxes can ssh to each other and share the same repo path (`/home/smc/multi-device-cwt`), so `make megaplot` pulls the other box's `results/scaling.csv` over `scp`, combines it with this box's own, and produces both the per-GPU-count bar charts above and the two scaling line charts:
 
 ```bash
 # from the H100 box:

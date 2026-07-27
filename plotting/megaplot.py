@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Combine scaling.csv files from multiple machines and produce one
-four-platform comparison plot per GPU count.
+"""Combine scaling.csv files from multiple machines and produce:
+  - one four-platform bar-chart snapshot per GPU count (plot_four_platforms.py)
+  - two line plots (GFLOP/s and wall time vs GPU count) across the whole
+    sweep, with an IQR ribbon (plot_scaling_lines.py)
 
-Why per GPU count: plot_four_platforms.py takes the median across every
-row it's given. Feeding it a sweep CSV that spans devices=1..8 directly
-would blend wildly different GPU counts into one meaningless median
-(GFLOP/s naturally varies a lot with device count). So this script splits
-the combined data by `devices` first and calls plot_four_platforms.py
-once per value.
+Why per GPU count for the bar charts: plot_four_platforms.py takes the
+median across every row it's given. Feeding it a sweep CSV that spans
+devices=1..8 directly would blend wildly different GPU counts into one
+meaningless median (GFLOP/s naturally varies a lot with device count). So
+this script splits the combined data by `devices` first and calls
+plot_four_platforms.py once per value. The line plots don't have this
+problem since GPU count is the x-axis.
 
 Usage:
     python3 plotting/megaplot.py results/scaling.csv results/scaling-mi250.csv \
@@ -67,6 +70,16 @@ def main():
              str(subpath), "--outdir", str(d_outdir), "--metric", args.metric],
             check=True,
         )
+
+    gflops_metric = "total_gflops" if args.metric.startswith("total") else "fwd_gflops"
+    time_metric = "total_wall_s" if args.metric.startswith("total") else "fwd_wall_s"
+    print(f"==> scaling line plots ({gflops_metric}, {time_metric}) -> {outdir}")
+    subprocess.run(
+        [sys.executable, str(HERE / "plot_scaling_lines.py"),
+         str(combined_path), "--outdir", str(outdir),
+         "--gflops-metric", gflops_metric, "--time-metric", time_metric],
+        check=True,
+    )
 
 
 if __name__ == "__main__":
