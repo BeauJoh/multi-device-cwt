@@ -44,7 +44,7 @@ REMOTE_PATH ?= /home/smc/multi-device-cwt
 METRIC      ?= fwd_gflops
 PLOTS_DIR   ?= plots
 
-.PHONY: all build sweep sweep-sizes megaplot clean clean-results clean-plot-deps \
+.PHONY: all build sweep sweep-sizes megaplot device-timelines clean clean-results clean-plot-deps \
         cwt-cuda-nvcc cwt-hip-hipcc \
         cwt-cuda-scale-nvidia cwt-cuda-scale-amd \
         ensure-scale ensure-plot-deps
@@ -255,6 +255,45 @@ sweep-sizes:
 	else \
 		echo "==> REMOTE_HOST not set (see setup-backends.sh) -- skipping megaplot; run 'make megaplot REMOTE_HOST=<other box>' manually"; \
 	fi
+
+# ------------------------------------------------------------
+# Device timelines from the shared ##DEVICE_TIMELINE host-side
+# instrumentation in cwt_hip.cpp/cwt_cuda.cu (launch_ms/done_ms per device).
+# Unlike a GPU-vendor profiler (rocprofv3 was tried and does not work for
+# the SCALE targets -- see README), this works identically across all four
+# implementations, on whichever backend(s) this host supports, since it's
+# the same benchmark harness code rather than vendor tooling. Fixed LABEL
+# per run (no timestamp), so plots/device_timeline_<label>.pdf/.png are
+# stable filenames you can reference directly from the white paper --
+# reruns just overwrite them in place. See scripts/device_timeline.sh.
+# ------------------------------------------------------------
+DEVICE_TIMELINE_SIZES ?= 2048 16384
+DEVICE_TIMELINE_GPUS  ?= 8
+
+device-timelines: build
+	@. ./setup-backends.sh; \
+	for n in $(DEVICE_TIMELINE_SIZES); do \
+		echo "==================================================================="; \
+		echo "==> device-timelines: N=$$n"; \
+		echo "==================================================================="; \
+		if [[ "$$BACKENDS" == *"cuda"* ]]; then \
+			ndev="$$(nvidia-smi -L 2>/dev/null | wc -l)"; \
+			gpus=$(DEVICE_TIMELINE_GPUS); [ "$$gpus" -le "$$ndev" ] || gpus="$$ndev"; \
+			LABEL="cuda-nvcc-N$$n" scripts/device_timeline.sh ./cwt-cuda-nvcc \
+			  --mode explicit --N "$$n" --B $(B) --gpus "$$gpus" --csv /dev/null --forward-only || exit 1; \
+			LABEL="scale-nvidia-N$$n" scripts/device_timeline.sh ./cwt-cuda-scale-nvidia \
+			  --mode explicit --N "$$n" --B $(B) --gpus "$$gpus" --csv /dev/null --forward-only || exit 1; \
+		fi; \
+		if [[ "$$BACKENDS" == *"hip"* ]]; then \
+			ndev="$$(rocminfo 2>/dev/null | grep -c 'Device Type:.*GPU')"; \
+			gpus=$(DEVICE_TIMELINE_GPUS); [ "$$gpus" -le "$$ndev" ] || gpus="$$ndev"; \
+			LABEL="hip-hipcc-N$$n" scripts/device_timeline.sh ./cwt-hip-hipcc \
+			  --mode explicit --N "$$n" --B $(B) --gpus "$$gpus" --csv /dev/null --forward-only || exit 1; \
+			LABEL="scale-amd-N$$n" scripts/device_timeline.sh ./cwt-cuda-scale-amd \
+			  --mode explicit --N "$$n" --B $(B) --gpus "$$gpus" --csv /dev/null --forward-only || exit 1; \
+		fi; \
+	done; \
+	echo "==> figures written to plots/device_timeline_<impl>-N<size>.pdf/.png for each N in: $(DEVICE_TIMELINE_SIZES)"
 
 # ------------------------------------------------------------
 # Plotting deps: pandas/matplotlib, in their own venv so this doesn't need

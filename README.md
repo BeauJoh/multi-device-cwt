@@ -74,6 +74,50 @@ Every run also prints one `##DEVICE_TIMELINE` line per device to stdout, e.g.:
 
 Buffer allocation for each task's output (`d_out`) also happens before the timed region now (previously it was allocated per-task inside the loop, interleaved with device switches — allocator overhead scaling with `--gpus` even as each task's chunk of work shrinks could itself explain part of a "more GPUs look slower" result that has nothing to do with the kernel).
 
+### Device timeline figures
+
+```bash
+make device-timelines
+```
+
+Renders the `##DEVICE_TIMELINE` data above as a static per-device Gantt-style
+figure: one row per device, one bar per `[launch_ms, done_ms]` interval.
+Overlapping bars across devices means concurrent execution; a staircase of
+non-overlapping bars means the dispatch is effectively serialized. For each
+`N` in `DEVICE_TIMELINE_SIZES` (default `2048 16384`) and each implementation
+this host's `BACKENDS` supports, at `--gpus` up to `DEVICE_TIMELINE_GPUS`
+(default 8, capped to however many devices this host actually has), this
+writes a **fixed-filename** figure (no timestamp, so reruns overwrite in
+place and the paths are stable to reference from the white paper):
+
+```
+plots/device_timeline_cuda-nvcc-N2048.pdf     / .png   (CUDA box)
+plots/device_timeline_scale-nvidia-N2048.pdf  / .png   (CUDA box)
+plots/device_timeline_hip-hipcc-N2048.pdf     / .png   (HIP box)
+plots/device_timeline_scale-amd-N2048.pdf     / .png   (HIP box)
+... and the same set for each other N in DEVICE_TIMELINE_SIZES
+```
+
+This is deliberately *not* a GPU-vendor profiler (e.g. `rocprofv3`, part of
+ROCm's ROCprofiler-SDK) wrapping the binary — that was tried, and works
+fine for `cwt-hip-hipcc`, but `cwt-cuda-scale-amd` cannot be traced this
+way: SCALE bundles its own private ROCm HSA runtime, and whenever any
+HSA-level profiler attaches to it, `libredscale.so`'s own device-detection
+throws `No CUDA devices found` a few calls into enumerating the first (CPU)
+agent, before it ever reaches a GPU. That's a bug in SCALE's runtime, not
+something fixable from this repo. Since a profiling approach that only
+covers one of the two implementations being compared isn't usable for an
+apples-to-apples comparison, `##DEVICE_TIMELINE` — which lives in the
+shared benchmark harness itself and therefore works identically for all
+four implementations on either machine — is what backs the timeline
+figures instead. See `scripts/device_timeline.sh` /
+`plotting/plot_device_timeline.py`.
+
+Under the hood this is `scripts/device_timeline.sh <binary> <args...>`,
+which you can also run directly for one-off timelines of any binary/args
+(raw stdout lands at `results/device-timeline-<label>.log`, where `<label>`
+defaults to a timestamp unless you set `LABEL=` yourself).
+
 ## Sweeping
 
 ```bash
