@@ -23,7 +23,7 @@ A small benchmark for scaling Continuous Wavelet Transforms (CWT) across multipl
 - A CUDA toolkit (`nvcc`) for the native and SCALE→NVIDIA builds.
 - ROCm/HIP (`hipcc`) for the native HIP build.
 - A SCALE install, unpacked at `./scale-1.7.2` (or point `SCALE_ROOT` elsewhere) for the two `scale-*` builds. You don't need to install this yourself — `make cwt-cuda-scale-nvidia` / `make cwt-cuda-scale-amd` depend on an `ensure-scale` target that downloads and unpacks SCALE 1.7.2 (pinned, via `SCALE_TARBALL_URL`) automatically if it's missing.
-- `hostname -s` must match one of the known hosts in `setup-backends.sh` (`milan2`, `milan0`, `hudson`, `faraday`, `cousteau`, `zenith`), or export `CUDA_DEV_TARGET` / `HIP_DEV_TARGET` yourself.
+- `hostname -s` must match a known host in `setup-backends.sh`, or export `CUDA_DEV_TARGET` / `HIP_DEV_TARGET` yourself.
 
 ## Building
 
@@ -65,8 +65,8 @@ done
 Every run also prints one `##DEVICE_TIMELINE` line per device to stdout, e.g.:
 
 ```
-##DEVICE_TIMELINE impl="HIP / HIPCC" machine="MI250" gpus=8 device=0 launch_ms=0.12 done_ms=42.87
-##DEVICE_TIMELINE impl="HIP / HIPCC" machine="MI250" gpus=8 device=1 launch_ms=0.31 done_ms=85.02
+##DEVICE_TIMELINE impl="HIP / HIPCC" machine="<your machine label>" gpus=8 device=0 launch_ms=0.12 done_ms=42.87
+##DEVICE_TIMELINE impl="HIP / HIPCC" machine="<your machine label>" gpus=8 device=1 launch_ms=0.31 done_ms=85.02
 ...
 ```
 
@@ -80,7 +80,7 @@ Buffer allocation for each task's output (`d_out`) also happens before the timed
 make sweep
 ```
 
-Builds whatever this host supports (same `BACKENDS` filtering as plain `make`), then runs every applicable binary across GPU counts `1..N`, `REPS` times each (default 5), appending every run to `results/scaling.csv`. Device counts are auto-detected — `nvidia-smi -L | wc -l` for CUDA, `rocminfo | grep -c 'Device Type:.*GPU'` for HIP — not hardcoded, so it adapts to whatever's actually plugged into that box (1 on the H100 box, 8 on the MI250 box).
+Builds whatever this host supports (same `BACKENDS` filtering as plain `make`), then runs every applicable binary across GPU counts `1..N`, `REPS` times each (default 5), appending every run to `results/scaling.csv`. Device counts are auto-detected — `nvidia-smi -L | wc -l` for CUDA, `rocminfo | grep -c 'Device Type:.*GPU'` for HIP — not hardcoded, so it adapts to whatever's actually plugged into that box.
 
 Override any of `N`, `B`, `REPS`, `CSV`, e.g.:
 
@@ -90,7 +90,7 @@ make sweep N=4096 REPS=10
 
 `make clean-results` removes the results directory.
 
-`make sweep` also auto-runs `make megaplot` at the end, using the `REMOTE_HOST` default set per host in `setup-backends.sh` (`mi250` from the H100 box, `h100` from the MI250 box) — so a plain `make sweep` on either box both collects results and refreshes the combined plots against whatever the other box last swept. If the other box hasn't swept yet (or its results.csv isn't there), this step just warns and skips rather than failing the sweep; rerun `make megaplot REMOTE_HOST=<...>` by hand once both sides are done. Override with `make sweep REMOTE_HOST=<other-alias>` or unset it to skip.
+`make sweep` also auto-runs `make megaplot` at the end, using the `REMOTE_HOST` default set per host in `setup-backends.sh` — so a plain `make sweep` on either box both collects results and refreshes the combined plots against whatever the other box last swept. If the other box hasn't swept yet (or its results.csv isn't there), this step just warns and skips rather than failing the sweep; rerun `make megaplot REMOTE_HOST=<...>` by hand once both sides are done. Override with `make sweep REMOTE_HOST=<other-alias>` or unset it to skip.
 
 ### Sweeping across problem sizes
 
@@ -100,7 +100,7 @@ make sweep-sizes
 
 Runs `make sweep` once per size in `SIZES` (default `2048 4096 8192 16384`), appending every size to the same CSV, then runs `megaplot` once at the end (not once per size). Useful for checking whether an effect (e.g. an implementation getting relatively worse with more GPUs) is a small-problem-size artifact — fixed per-device overhead (kernel launch, allocator, device-context switches) that matters less as each GPU's chunk of real work grows.
 
-Forward CWT cost is `O(B*N^3)` (the number of scales `A` is set to `N`, and the kernel is `O(A*N*N)` per batch element), so doubling `N` is roughly an 8x increase in total compute — this ladder gets slow fast. `N=16384` alone can take tens of minutes on the MI250 leg at `REPS=5`; go to `32768` (`make sweep-sizes SIZES="2048 4096 8192 16384 32768"`) only if you've got the time budget, and consider a lower `REPS` for it, e.g. `make sweep N=32768 REPS=2 SKIP_MEGAPLOT=1` run by hand.
+Forward CWT cost is `O(B*N^3)` (the number of scales `A` is set to `N`, and the kernel is `O(A*N*N)` per batch element), so doubling `N` is roughly an 8x increase in total compute — this ladder gets slow fast. `N=16384` alone can take tens of minutes on a multi-GPU box at `REPS=5`; go to `32768` (`make sweep-sizes SIZES="2048 4096 8192 16384 32768"`) only if you've got the time budget, and consider a lower `REPS` for it, e.g. `make sweep N=32768 REPS=2 SKIP_MEGAPLOT=1` run by hand.
 
 ## Plotting
 
@@ -121,7 +121,7 @@ Note: this script medians across every row it's given, so only feed it rows from
 python3 plotting/plot_scaling_lines.py results/scaling-combined.csv --outdir plots
 ```
 
-NVIDIA-targeting and AMD-targeting implementations keep their platform colour (NVIDIA green / AMD red) in both charts. Within each colour, native (`CUDA / NVCC`, `HIP / HIPCC`) is a solid line with a circle marker, and the corresponding SCALE build (`CUDA / SCALE→NVIDIA`, `CUDA / SCALE→AMD`) is a darker shade of the same colour, dashed, with a square marker — so native vs SCALE is easy to tell apart at a glance even across two different colour families, and native's circle is drawn on top where the two coincide. The H100 box only has one GPU, so its two series just show as a single point at devices=1, which is expected. `--gflops-metric`/`--time-metric` pick which columns to plot (`fwd_*` by default, or `total_*`).
+NVIDIA-targeting and AMD-targeting implementations keep their platform colour (NVIDIA green / AMD red) in both charts. Within each colour, native (`CUDA / NVCC`, `HIP / HIPCC`) is a solid line with a circle marker, and the corresponding SCALE build (`CUDA / SCALE→NVIDIA`, `CUDA / SCALE→AMD`) is a darker shade of the same colour, dashed, with a square marker — so native vs SCALE is easy to tell apart at a glance even across two different colour families, and native's circle is drawn on top where the two coincide. A single-GPU box's two series will just show as a single point at devices=1, which is expected. `--gflops-metric`/`--time-metric` pick which columns to plot (`fwd_*` by default, or `total_*`).
 
 `plotting/plot_vs_problem_size.py` plots the opposite axis — GFLOP/s and wall time vs problem size `N` (log2 x-axis), for a results CSV spanning multiple sizes (i.e. from `make sweep-sizes`):
 
@@ -129,21 +129,17 @@ NVIDIA-targeting and AMD-targeting implementations keep their platform colour (N
 python3 plotting/plot_vs_problem_size.py results/scaling-combined.csv --outdir plots
 ```
 
-Same colour/style scheme as the GPU-count line charts. Each series is plotted at its own largest swept GPU count (so `CUDA / NVCC`/`CUDA / SCALE→NVIDIA` use devices=1 on the single-GPU H100 box, `HIP / HIPCC`/`CUDA / SCALE→AMD` use devices=8 on the MI250 box), which is the relevant comparison for checking whether a GPU-count effect is really a small-problem-size overhead artifact: if the gap between native and SCALE (or the "more GPUs is worse" slope) narrows or flattens as `N` grows, that's the signature of fixed per-device overhead losing significance relative to a growing amount of real compute per device. Only produced when the CSV has more than one distinct `N` (a single-size CSV is skipped, not an error).
+Same colour/style scheme as the GPU-count line charts. Each series is plotted at its own largest swept GPU count (so implementations that only ever ran on a single-GPU box naturally show devices=1, while implementations run on a multi-GPU box show its full device count), which is the relevant comparison for checking whether a GPU-count effect is really a small-problem-size overhead artifact: if the gap between native and SCALE (or the "more GPUs is worse" slope) narrows or flattens as `N` grows, that's the signature of fixed per-device overhead losing significance relative to a growing amount of real compute per device. Only produced when the CSV has more than one distinct `N` (a single-size CSV is skipped, not an error).
 
-### Combining results from both machines
+### Combining results from multiple machines
 
-The H100 and MI250 boxes can ssh to each other and share the same repo path (`/home/smc/multi-device-cwt`), so `make megaplot` pulls the other box's `results/scaling.csv` over `scp`, combines it with this box's own, and produces the per-GPU-count bar charts, the two scaling-vs-GPU-count line charts, and (if more than one problem size is present) the two scaling-vs-N line charts:
+If you're running this across more than one machine and they can `ssh` to each other with the repo at the same path on both, `make megaplot` pulls the other box's `results/scaling.csv` over `scp`, combines it with this box's own, and produces the per-GPU-count bar charts, the two scaling-vs-GPU-count line charts, and (if more than one problem size is present) the two scaling-vs-N line charts:
 
 ```bash
-# from the H100 box:
-make megaplot REMOTE_HOST=mi250
-
-# from the MI250 box:
-make megaplot REMOTE_HOST=h100
+make megaplot REMOTE_HOST=<ssh alias for the other box>
 ```
 
-`REMOTE_HOST` should be whatever ssh alias reaches the other box. Override `REMOTE_PATH` if the repo lives somewhere other than `/home/smc/multi-device-cwt` on the remote, and `METRIC`/`PLOTS_DIR` the same way as above. Output is split by problem size first (`plots/N-<n>/...`, skipped if there's only one size), then by GPU count within each size (`plots/N-<n>/devices-<d>/...`, same skip rule); the vs-N charts land directly under `plots/`. Combined raw CSV is written to `results/scaling-combined.csv`.
+Run the same command (with the appropriate alias) from either side. `REMOTE_HOST` should be whatever ssh alias reaches the other box; `setup-backends.sh` can set a per-host default so you don't have to pass it explicitly. Override `REMOTE_PATH` if the repo lives somewhere other than the default path on the remote, and `METRIC`/`PLOTS_DIR` the same way as above. Output is split by problem size first (`plots/N-<n>/...`, skipped if there's only one size), then by GPU count within each size (`plots/N-<n>/devices-<d>/...`, same skip rule); the vs-N charts land directly under `plots/`. Combined raw CSV is written to `results/scaling-combined.csv`.
 
 `make megaplot` installs `pandas`/`matplotlib` itself the first time, into a local venv at `.venv-plots` (no system pip access needed, and it won't touch any other Python on the box). `make clean-plot-deps` removes that venv if you ever want it rebuilt.
 
