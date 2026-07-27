@@ -103,4 +103,6 @@ make megaplot REMOTE_HOST=h100
 
 `REMOTE_HOST` should be whatever ssh alias reaches the other box. Override `REMOTE_PATH` if the repo lives somewhere other than `/home/smc/multi-device-cwt` on the remote, and `METRIC`/`PLOTS_DIR` the same way as above. Output goes to `plots/devices-<N>/` per GPU count, with the combined raw CSV at `results/scaling-combined.csv`.
 
-You can also run this by hand for more control — `python3 plotting/megaplot.py <csv1> <csv2> ... --outdir plots --metric fwd_gflops`.
+`make megaplot` installs `pandas`/`matplotlib` itself the first time, into a local venv at `.venv-plots` (no system pip access needed, and it won't touch any other Python on the box). `make clean-plot-deps` removes that venv if you ever want it rebuilt.
+
+You can also run this by hand for more control — `.venv-plots/bin/python3 plotting/megaplot.py <csv1> <csv2> ... --outdir plots --metric fwd_gflops`.

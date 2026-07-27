@@ -36,10 +36,10 @@ REMOTE_PATH ?= /home/smc/multi-device-cwt
 METRIC      ?= fwd_gflops
 PLOTS_DIR   ?= plots
 
-.PHONY: all build sweep megaplot clean clean-results \
+.PHONY: all build sweep megaplot clean clean-results clean-plot-deps \
         cwt-cuda-nvcc cwt-hip-hipcc \
         cwt-cuda-scale-nvidia cwt-cuda-scale-amd \
-        ensure-scale
+        ensure-scale ensure-plot-deps
 
 # Plain `make` builds only what this host actually supports (per BACKENDS
 # from setup-backends.sh). `make all` always forces every target, useful on
@@ -218,13 +218,33 @@ sweep: build
 	echo "==> results appended to $(CSV)"
 
 # ------------------------------------------------------------
+# Plotting deps: pandas/matplotlib, in their own venv so this doesn't need
+# system pip access (Ubuntu's "externally managed environment" pip refuses
+# a bare `pip install` anyway) and doesn't disturb any other Python on the
+# box. Same auto-install philosophy as ensure-scale above.
+# ------------------------------------------------------------
+PLOT_VENV ?= $(CURDIR)/.venv-plots
+PLOT_PY   := $(PLOT_VENV)/bin/python3
+
+ensure-plot-deps:
+	@if [ ! -x "$(PLOT_PY)" ]; then \
+		echo "==> creating plotting venv at $(PLOT_VENV)"; \
+		python3 -m venv "$(PLOT_VENV)"; \
+	fi
+	@if ! "$(PLOT_PY)" -c "import pandas, matplotlib" >/dev/null 2>&1; then \
+		echo "==> installing pandas + matplotlib into $(PLOT_VENV)"; \
+		"$(PLOT_VENV)/bin/pip" install -q --upgrade pip; \
+		"$(PLOT_VENV)/bin/pip" install -q pandas matplotlib; \
+	fi
+
+# ------------------------------------------------------------
 # Megaplot: scp the other box's results/scaling.csv over (both boxes can
 # ssh to each other, same path on both: /home/smc/multi-device-cwt), combine
 # it with this box's own $(CSV), and produce one four-platform comparison
 # chart per GPU count (see plotting/megaplot.py for why it's split by
 # device count rather than one blended chart).
 # ------------------------------------------------------------
-megaplot:
+megaplot: | ensure-plot-deps
 	@if [ -z "$(REMOTE_HOST)" ]; then \
 		echo "Usage: make megaplot REMOTE_HOST=<ssh alias of the other box>" >&2; \
 		echo "  e.g. from the H100 box:  make megaplot REMOTE_HOST=mi250" >&2; \
@@ -233,7 +253,7 @@ megaplot:
 	fi
 	@mkdir -p "$(RESULTS_DIR)"
 	scp "$(REMOTE_HOST):$(REMOTE_PATH)/$(CSV)" "$(RESULTS_DIR)/scaling-$(REMOTE_HOST).csv"
-	python3 plotting/megaplot.py "$(CSV)" "$(RESULTS_DIR)/scaling-$(REMOTE_HOST).csv" \
+	"$(PLOT_PY)" plotting/megaplot.py "$(CSV)" "$(RESULTS_DIR)/scaling-$(REMOTE_HOST).csv" \
 	  --outdir "$(PLOTS_DIR)" --metric "$(METRIC)" \
 	  --combined-csv "$(RESULTS_DIR)/scaling-combined.csv"
 
@@ -242,3 +262,6 @@ clean:
 
 clean-results:
 	rm -rf "$(RESULTS_DIR)"
+
+clean-plot-deps:
+	rm -rf "$(PLOT_VENV)"

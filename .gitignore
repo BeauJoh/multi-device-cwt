@@ -1,0 +1,8 @@
+.venv-plots/
+results/
+plots/
+scale-1.7.2/
+cwt-cuda-nvcc
+cwt-hip-hipcc
+cwt-cuda-scale-nvidia
+cwt-cuda-scale-amd
