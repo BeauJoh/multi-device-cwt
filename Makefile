@@ -44,7 +44,7 @@ REMOTE_PATH ?= /home/smc/multi-device-cwt
 METRIC      ?= fwd_gflops
 PLOTS_DIR   ?= plots
 
-.PHONY: all build sweep sweep-sizes megaplot rocprof-timelines clean clean-results clean-plot-deps \
+.PHONY: all build sweep sweep-sizes megaplot clean clean-results clean-plot-deps \
         cwt-cuda-nvcc cwt-hip-hipcc \
         cwt-cuda-scale-nvidia cwt-cuda-scale-amd \
         ensure-scale ensure-plot-deps
@@ -255,35 +255,6 @@ sweep-sizes:
 	else \
 		echo "==> REMOTE_HOST not set (see setup-backends.sh) -- skipping megaplot; run 'make megaplot REMOTE_HOST=<other box>' manually"; \
 	fi
-
-# ------------------------------------------------------------
-# rocprofv3 kernel-dispatch timelines: device-side evidence (not just the
-# host-side ##DEVICE_TIMELINE polling in cwt_hip.cpp/cwt_cuda.cu) of whether
-# HIP/HIPCC and CUDA/SCALE->AMD are actually dispatching concurrently across
-# GPUs, at a small (anomalous) and a large (fixed) problem size. Uses a fixed
-# LABEL per run (no timestamp), so plots/rocprof_timeline_<label>.pdf/.png
-# are stable filenames you can reference directly from the white paper --
-# reruns just overwrite them in place. See scripts/rocprof_trace.sh.
-# ------------------------------------------------------------
-ROCPROF_SIZES ?= 2048 16384
-ROCPROF_GPUS  ?= 8
-
-rocprof-timelines: build
-	@. ./setup-backends.sh; \
-	if [[ "$$BACKENDS" != *"hip"* ]]; then \
-		echo "error: rocprof-timelines only runs on the AMD (HIP) box (BACKENDS='$$BACKENDS')" >&2; \
-		exit 1; \
-	fi; \
-	for n in $(ROCPROF_SIZES); do \
-		echo "==================================================================="; \
-		echo "==> rocprof-timelines: N=$$n"; \
-		echo "==================================================================="; \
-		LABEL="hip-hipcc-N$$n" scripts/rocprof_trace.sh ./cwt-hip-hipcc \
-		  --mode explicit --N "$$n" --B $(B) --gpus $(ROCPROF_GPUS) --csv /dev/null --forward-only || exit 1; \
-		LABEL="scale-amd-N$$n" scripts/rocprof_trace.sh ./cwt-cuda-scale-amd \
-		  --mode explicit --N "$$n" --B $(B) --gpus $(ROCPROF_GPUS) --csv /dev/null --forward-only || exit 1; \
-	done; \
-	echo "==> figures written to plots/rocprof_timeline_{hip-hipcc,scale-amd}-N<size>.pdf/.png for each N in: $(ROCPROF_SIZES)"
 
 # ------------------------------------------------------------
 # Plotting deps: pandas/matplotlib, in their own venv so this doesn't need
