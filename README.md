@@ -164,6 +164,30 @@ synthetic test signal: ~0.7% relative RMS error at `N=128`, ~3.1% at `N=256`
 scale grid were the old narrow linear band instead of the current wide,
 log-spaced one (see the scale-grid note in "Running" above).
 
+**Provenance of the figure**: every pixel in `plots/icwt_demo_*.pdf` comes
+from that box's own compute, not from any Python/CPU stand-in. The
+sequence is: the binary runs the forward CWT on-GPU exactly as it does in
+every other mode; `run_icwt_demo()` then computes the inverse CWT
+host-side from that same GPU output (still on that machine, just not on
+the device) and writes `signal.csv` / `scales.csv` / `coeffs.csv` under
+`--icwt-dir`; `plot_icwt.py` reads those three CSVs and renders the
+figure. So `plots/icwt_demo_cuda-nvcc-N256.pdf` is the H100 box's native
+CUDA build's own output, `plots/icwt_demo_scale-amd-N256.pdf` is the
+MI250 box's SCALE→AMD build's own output, and so on -- each one is an
+independently-reproducible artifact of that specific compiled binary, not
+a shared/representative example. Because the reconstruction is
+deterministic (fixed synthetic signal, fixed formula, IEEE double
+arithmetic), the four figures should all show visually near-identical
+input/reconstruction, and near-identical `rel_rms_err` -- the point of
+generating all four separately isn't to find different-looking plots,
+it's confirming each compiled binary (native and SCALE, both platforms)
+independently reproduces the same correct result.
+
+Like `device-timelines`, this is per-box with no cross-machine
+dependency -- run `make verify icwt-demo` on each box independently (any
+order, either before or after `sweep-sizes`/`device-timelines`/
+`megaplot`); there's nothing here for one box to wait on from the other.
+
 ## Sweeping
 
 ```bash
