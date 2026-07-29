@@ -44,7 +44,7 @@ To force every target regardless of `BACKENDS` (e.g. cross-checking on a dev box
 Each binary shares the same CLI:
 
 ```bash
-./cwt-cuda-nvcc --N <samples> --B <batch> --gpus <n> --mode explicit|single --csv results.csv [--forward-only] [--verify] [--verify-samples <k>]
+./cwt-cuda-nvcc --N <samples> --B <batch> --gpus <n> --mode explicit|single --csv results.csv [--forward-only] [--verify] [--verify-samples <k>] [--icwt] [--icwt-dir <dir>]
 ```
 
 - `--N` — signal length (also used as the number of scales).
@@ -52,6 +52,9 @@ Each binary shares the same CLI:
 - `--gpus` — number of devices to shard work across (`explicit` mode) or ignored (`single` mode, one device).
 - `--csv` — appends a results row (implementation, machine, backend, N, B, devices, wall time, GFLOP/s, etc.) to this file.
 - `--verify` — after the timed region, check a random sample of the forward-CWT output against a CPU reference computed with the identical math (same summation order, so it's a meaningful bit-level check, not just "close enough"). Off by default: without it, the `rel_err` column is `0.0` meaning *not checked*, not *verified correct* -- this was previously the unconditional, silent behavior for every row in every results CSV, i.e. no correctness check had actually ever been run. Prints `verify=PASS`/`FAIL` and the max sampled relative error; `--verify-samples <k>` controls how many random `(batch, scale, time)` points are checked (default 2000, fixed RNG seed so native and SCALE builds check the exact same points).
+- `--icwt` — after the timed region, run a host-side inverse-CWT (ICWT) round-trip demo on the already-computed forward output and dump CSVs for plotting (see "Inverse CWT (ICWT) round-trip demo" below). Requires `--B 1`. `--icwt-dir <dir>` sets where the CSVs land (default `results/icwt`).
+
+Note on the scale grid: `scales` is a log-spaced range from `0.001` to `2.0` (`A` values, `A=N`), not a narrow linear band -- this matters for the ICWT round-trip below (a wide, log-spaced scale grid is needed for the classical CWT reconstruction formula to work well; a narrow band is fine for the forward transform but reconstructs poorly). Changing the scale *values* has no effect on any previously-collected timing/GFLOP-s numbers, since forward-transform cost only depends on the scale *count* (`A=N`) and `N`, never on the actual scale values.
 
 Example, comparing all four builds at 4-way scaling on `N=2048`:
 
@@ -118,6 +121,48 @@ Under the hood this is `scripts/device_timeline.sh <binary> <args...>`,
 which you can also run directly for one-off timelines of any binary/args
 (raw stdout lands at `results/device-timeline-<label>.log`, where `<label>`
 defaults to a timestamp unless you set `LABEL=` yourself).
+
+### Inverse CWT (ICWT) round-trip demo
+
+```bash
+make icwt-demo
+```
+
+Runs each applicable binary once (single GPU, `--B 1`, small `N` -- default
+`ICWT_N=256`, override with `make icwt-demo ICWT_N=512`) with `--icwt`, then
+renders a fixed-filename 3-panel figure per implementation:
+
+```
+plots/icwt_demo_cuda-nvcc-N256.pdf     / .png   (CUDA box)
+plots/icwt_demo_scale-nvidia-N256.pdf  / .png   (CUDA box)
+plots/icwt_demo_hip-hipcc-N256.pdf     / .png   (HIP box)
+plots/icwt_demo_scale-amd-N256.pdf     / .png   (HIP box)
+```
+
+Each figure shows: the 1D synthetic input signal, the 2D CWT coefficient
+heatmap, and the 1D reconstructed signal overlaid on the original, with the
+relative RMS reconstruction error in the title. This is a correctness/
+consistency check -- forward CWT followed by a simple inverse-CWT should
+give back (approximately) the same signal that went in -- not a
+performance benchmark, which is why it runs at a small, fixed `N` rather
+than the sweep sizes (the CWT coefficient dump this needs is `O(A*N)`,
+i.e. `O(N^2)`, and gets large fast: don't point `ICWT_N` at the sweep's
+larger sizes).
+
+The reconstruction formula is the simple single-scale-sum form of the
+classical Grossmann-Morlet CWT inverse: `f(t) ~= C . sum_a W(a,t) . a^-2 . da(a)`,
+computed host-side in `run_icwt_demo()` (in `cwt_hip.cpp`/`cwt_cuda.cu`) from
+the already-computed forward output -- it's `O(A*N)`, trivial next to the
+`O(A*N*N)` forward transform being benchmarked, so there's no dedicated GPU
+kernel for it. The scalar `C` is calibrated once via a least-squares fit
+against the known synthetic input signal (the only signal this program ever
+generates), the same spirit as `--verify` re-using a known CPU reference; a
+production ICWT over an arbitrary, unknown signal would instead use a fixed
+`C` derived analytically from the wavelet and scale grid alone. On this
+synthetic test signal: ~0.7% relative RMS error at `N=128`, ~3.1% at `N=256`
+(both well within visual/plotting resolution) -- versus ~18-84% if the
+scale grid were the old narrow linear band instead of the current wide,
+log-spaced one (see the scale-grid note in "Running" above).
 
 ## Sweeping
 

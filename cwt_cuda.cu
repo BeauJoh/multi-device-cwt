@@ -34,6 +34,8 @@ struct Args {
   bool forward_only = false;
   bool verify = false;
   long verify_samples = 2000;
+  bool icwt = false;
+  std::string icwt_dir = "results/icwt";
   std::string mode = "explicit";
   std::string csv = "results.csv";
 };
@@ -143,11 +145,126 @@ static real_t cpu_forward_ref(
   return sum * dt;
 }
 
+// Optional inverse-CWT (ICWT) round-trip demo, run host-side on the
+// already-computed h_cwt/h_fx after the forward transform completes. This
+// is deliberately NOT a GPU kernel: it's an O(A*N) weighted sum, trivial
+// next to the O(A*N*N) forward transform being benchmarked, and it's only
+// ever used as a correctness/visualisation check, never on the timed path.
+//
+// Reconstruction formula (the simple single-scale-sum form of the classical
+// Grossmann-Morlet CWT inverse):
+//     f(t) ~= C * sum_a W(a,t) * a^-2 * da(a)
+// where da(a) is the (possibly non-uniform, e.g. log-spaced) scale-grid
+// spacing around a, approximated with a centred finite difference (same
+// convention as numpy.gradient). The scalar C folds together dt, the
+// wavelet's admissibility constant, and this scale grid's discretisation
+// error. Since the only signal this program ever generates is the known
+// synthetic build_signal() output, C is calibrated once via a single
+// scalar least-squares fit against that known signal -- the same spirit as
+// the --verify check re-using a known CPU reference. (For a production
+// ICWT over an arbitrary, unknown signal, C would instead be a fixed
+// constant derived analytically from the wavelet and scale grid alone, not
+// fit against the answer.)
+static void run_icwt_demo(
+    const std::vector<real_t>& h_fx,
+    const std::vector<real_t>& h_cwt,
+    const std::vector<real_t>& h_scales,
+    const std::vector<real_t>& h_trans,
+    int N, int A, int B,
+    const std::string& outdir) {
+  if (B != 1) {
+    std::cout << "  icwt: skipped (only supported for --B 1)\n";
+    return;
+  }
+
+  std::vector<real_t> da(A);
+  for (int a = 0; a < A; ++a) {
+    if (A == 1) da[a] = real_t(1);
+    else if (a == 0) da[a] = h_scales[1] - h_scales[0];
+    else if (a == A - 1) da[a] = h_scales[A - 1] - h_scales[A - 2];
+    else da[a] = (h_scales[a + 1] - h_scales[a - 1]) / real_t(2);
+  }
+
+  std::vector<real_t> raw(N, real_t(0));
+  for (int a = 0; a < A; ++a) {
+    real_t w = da[a] / (h_scales[a] * h_scales[a]);
+    const real_t* row = h_cwt.data() + size_t(a) * N;
+    for (int n = 0; n < N; ++n) raw[n] += row[n] * w;
+  }
+
+  real_t dot_raw_fx = 0, dot_raw_raw = 0;
+  for (int n = 0; n < N; ++n) {
+    dot_raw_fx += raw[n] * h_fx[n];
+    dot_raw_raw += raw[n] * raw[n];
+  }
+  real_t C = dot_raw_raw > 0 ? dot_raw_fx / dot_raw_raw : real_t(0);
+
+  std::vector<real_t> recon(N);
+  real_t sse = 0, sig_ss = 0;
+  for (int n = 0; n < N; ++n) {
+    recon[n] = C * raw[n];
+    real_t d = recon[n] - h_fx[n];
+    sse += d * d;
+    sig_ss += h_fx[n] * h_fx[n];
+  }
+  real_t rel_rms = sig_ss > 0 ? std::sqrt(sse / N) / std::sqrt(sig_ss / N) : real_t(0);
+
+  std::cout << "  icwt: C=" << C << " rel_rms_err=" << rel_rms << "\n";
+
+  std::system((std::string("mkdir -p ") + outdir).c_str());
+
+  {
+    std::ofstream f(outdir + "/signal.csv");
+    f << "t,fx,recon\n";
+    for (int n = 0; n < N; ++n) {
+      f << h_trans[n] << "," << h_fx[n] << "," << recon[n] << "\n";
+    }
+  }
+  {
+    std::ofstream f(outdir + "/scales.csv");
+    f << "a_idx,scale\n";
+    for (int a = 0; a < A; ++a) f << a << "," << h_scales[a] << "\n";
+  }
+  {
+    // One row per scale index, N coefficient values per row.
+    std::ofstream f(outdir + "/coeffs.csv");
+    for (int a = 0; a < A; ++a) {
+      const real_t* row = h_cwt.data() + size_t(a) * N;
+      for (int n = 0; n < N; ++n) {
+        if (n) f << ",";
+        f << row[n];
+      }
+      f << "\n";
+    }
+  }
+  std::cout << "  icwt: wrote " << outdir << "/{signal,scales,coeffs}.csv\n";
+}
+
 static std::vector<real_t> linspace(real_t lo, real_t hi, int N) {
   std::vector<real_t> x(N);
   for (int i = 0; i < N; ++i) {
     real_t t = N > 1 ? real_t(i) / real_t(N - 1) : 0;
     x[i] = lo + t * (hi - lo);
+  }
+  return x;
+}
+
+// Log-spaced scale grid (like numpy.geomspace). Used instead of a narrow
+// linear range: the classical CWT reconstruction (inverse transform) only
+// holds well when the scale grid spans several octaves -- a narrow linear
+// band like the old [0.01, 0.10] range is fine for the *forward* transform
+// (the exact linear system is still invertible in principle) but gives a
+// poor, lossy round-trip under any cheap/parallel-friendly reconstruction
+// formula. Widening only the scale *values* here (not the scale *count*,
+// A=N is unchanged) has zero effect on previously-collected timing/GFLOP-s
+// data, since forward-transform cost only depends on A and N.
+static std::vector<real_t> logspace(real_t lo, real_t hi, int N) {
+  std::vector<real_t> x(N);
+  real_t log_lo = std::log(lo);
+  real_t log_hi = std::log(hi);
+  for (int i = 0; i < N; ++i) {
+    real_t t = N > 1 ? real_t(i) / real_t(N - 1) : 0;
+    x[i] = std::exp(log_lo + t * (log_hi - log_lo));
   }
   return x;
 }
@@ -213,6 +330,10 @@ static Args parse_args(int argc, char** argv) {
       a.verify = true;
     } else if (s == "--verify-samples") {
       a.verify_samples = std::atol(need(s.c_str()));
+    } else if (s == "--icwt") {
+      a.icwt = true;
+    } else if (s == "--icwt-dir") {
+      a.icwt_dir = need(s.c_str());
     } else {
       throw std::runtime_error("unknown argument: " + s);
     }
@@ -243,7 +364,7 @@ int main(int argc, char** argv) {
   const int chunks = std::max(1, args.chunks);
 
   std::vector<real_t> h_fx = build_signal(N, B);
-  std::vector<real_t> h_scales = linspace(0.01, 0.10, A);
+  std::vector<real_t> h_scales = logspace(0.001, 2.0, A);
   std::vector<real_t> h_trans = linspace(-1.0, 1.0, N);
   std::vector<real_t> h_cwt(size_t(B) * A * N, 0);
 
@@ -434,6 +555,10 @@ int main(int argc, char** argv) {
               << " max_abs_err=" << max_abs_err
               << " max_rel_err=" << max_rel_err
               << " verify=" << (verify_pass ? "PASS" : "FAIL") << "\n";
+  }
+
+  if (args.icwt) {
+    run_icwt_demo(h_fx, h_cwt, h_scales, h_trans, N, A, B, args.icwt_dir);
   }
 
   double gf = gflops_forward(B, A, N, fwd_s);
