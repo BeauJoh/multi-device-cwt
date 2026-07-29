@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <random>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -28,6 +29,8 @@ struct Args {
   int chunks = 1;
   int sweep = 1;
   bool forward_only = false;
+  bool verify = false;
+  long verify_samples = 2000;
   std::string mode = "explicit";
   std::string csv = "results.csv";
 };
@@ -119,6 +122,34 @@ static std::vector<real_t> build_signal(int N, int B) {
   return fx;
 }
 
+// Host-only twin of the device mexican_hat() above -- kept as a separate
+// function (rather than reusing the __device__ one) since it must be
+// callable from plain host code for the --verify correctness check below.
+static inline real_t mexican_hat_host(real_t x) {
+  real_t x2 = x * x;
+  return (real_t(1) - x2) * std::exp(real_t(-0.5) * x2);
+}
+
+// CPU reference for a single forward-CWT output point (b, a_idx, n),
+// using the exact same math/summation order as cwt_forward_kernel above.
+// Only used for the optional --verify check, never on the timed path, so
+// it's fine that this is O(N) per call.
+static real_t cpu_forward_ref(
+    const std::vector<real_t>& fx, const std::vector<real_t>& scales,
+    const std::vector<real_t>& trans, int N, int b, int a_idx, int n) {
+  real_t aval = scales[a_idx];
+  real_t inv_sqrt_a = real_t(1) / std::sqrt(aval);
+  real_t tn = trans[n];
+  real_t dt = trans[1] - trans[0];
+  real_t sum = 0;
+  for (int k = 0; k < N; ++k) {
+    real_t tk = trans[k];
+    real_t x = (tk - tn) / aval;
+    sum += fx[b * N + k] * inv_sqrt_a * mexican_hat_host(x);
+  }
+  return sum * dt;
+}
+
 static double gflops_forward(int B, int A, int N, double sec) {
   double flops = 2.0 * double(B) * double(A) * double(N) * double(N);
   return sec > 0 ? flops / sec / 1e9 : INFINITY;
@@ -179,6 +210,10 @@ static Args parse_args(int argc, char** argv) {
       a.csv = need(s.c_str());
     } else if (s == "--forward-only") {
       a.forward_only = true;
+    } else if (s == "--verify") {
+      a.verify = true;
+    } else if (s == "--verify-samples") {
+      a.verify_samples = std::atol(need(s.c_str()));
     } else {
       throw std::runtime_error("unknown argument: " + s);
     }
@@ -368,7 +403,53 @@ int main(int argc, char** argv) {
     HIP_CHECK(hipStreamDestroy(streams[w]));
   }
 
+  // Correctness check (opt-in, off the timed path): compare a random
+  // sample of h_cwt entries (already copied back from the GPU above)
+  // against a CPU reference computed with the identical math. rel_err
+  // stays 0.0 -- meaning "not checked", not "verified correct" -- unless
+  // --verify was actually passed; previously this was unconditionally
+  // 0.0 with no check ever performed, which silently looked like a clean
+  // pass in every results CSV collected before this.
   double rel_err = 0.0;
+  bool verify_pass = true;
+  long verify_ran = 0;
+  if (args.verify) {
+    std::mt19937 rng(12345);  // fixed seed: same sample points across
+                               // implementations/machines for a fair
+                               // native-vs-SCALE comparison.
+    std::uniform_int_distribution<int> pick_b(0, B - 1);
+    std::uniform_int_distribution<int> pick_a(0, A - 1);
+    std::uniform_int_distribution<int> pick_n(0, N - 1);
+    long samples = std::max<long>(1, std::min<long>(args.verify_samples, (long)B * A * N));
+    const real_t atol = 1e-9;
+    const real_t rtol = 1e-9;
+    double max_abs_err = 0.0;
+    double max_rel_err = 0.0;
+    for (long s = 0; s < samples; ++s) {
+      int b = pick_b(rng);
+      int a_idx = pick_a(rng);
+      int n = pick_n(rng);
+      real_t ref = cpu_forward_ref(h_fx, h_scales, h_trans, N, b, a_idx, n);
+      // NOTE: this indexing assumes B==1 or chunks==1 -- with multiple
+      // GPU chunks *and* B>1, the per-task memcpy above packs h_cwt in a
+      // way that does not correspond to a clean (b*A+a)*N+n layout. Every
+      // sweep in this project uses --B 1, so this has never mattered in
+      // practice, but flagging it here rather than silently mis-indexing.
+      real_t got = h_cwt[(size_t(b) * A + a_idx) * N + n];
+      real_t abs_err = std::fabs(double(got) - double(ref));
+      real_t rel_err_i = abs_err / (std::fabs(double(ref)) + atol);
+      max_abs_err = std::max(max_abs_err, double(abs_err));
+      max_rel_err = std::max(max_rel_err, double(rel_err_i));
+      if (abs_err > atol + rtol * std::fabs(double(ref))) verify_pass = false;
+    }
+    verify_ran = samples;
+    rel_err = max_rel_err;
+    std::cout << "  verify_samples=" << verify_ran
+              << " max_abs_err=" << max_abs_err
+              << " max_rel_err=" << max_rel_err
+              << " verify=" << (verify_pass ? "PASS" : "FAIL") << "\n";
+  }
+
   double gf = gflops_forward(B, A, N, fwd_s);
 
   std::cout << "\nmode=" << args.mode
@@ -378,7 +459,9 @@ int main(int argc, char** argv) {
   std::cout << "  forward_wall_s=" << fwd_s << "  GFLOP/s≈" << gf << "\n";
   std::cout << "  inverse_wall_s=0  GFLOP/s≈0\n";
   std::cout << "  total_wall_s=" << fwd_s << "    GFLOP/s≈" << gf << "\n";
-  std::cout << "  rel_err=" << rel_err << "\n";
+  std::cout << "  rel_err=" << rel_err
+            << (args.verify ? (verify_pass ? "  (verify=PASS)" : "  (verify=FAIL)")
+                             : "  (not checked -- pass --verify)") << "\n";
 
   append_csv(args.csv, N, B, A, chunks, fwd_s, rel_err);
   std::cout << "\nAppended results CSV: " << args.csv << "\n";

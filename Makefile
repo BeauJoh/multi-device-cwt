@@ -44,7 +44,7 @@ REMOTE_PATH ?= /home/smc/multi-device-cwt
 METRIC      ?= fwd_gflops
 PLOTS_DIR   ?= plots
 
-.PHONY: all build sweep sweep-sizes megaplot device-timelines clean clean-results clean-plot-deps \
+.PHONY: all build sweep sweep-sizes megaplot device-timelines verify clean clean-results clean-plot-deps \
         cwt-cuda-nvcc cwt-hip-hipcc \
         cwt-cuda-scale-nvidia cwt-cuda-scale-amd \
         ensure-scale ensure-plot-deps
@@ -294,6 +294,40 @@ device-timelines: build
 		fi; \
 	done; \
 	echo "==> figures written to plots/device_timeline_<impl>-N<size>.pdf/.png for each N in: $(DEVICE_TIMELINE_SIZES)"
+
+# ------------------------------------------------------------
+# Numerical correctness check: run each applicable binary once, single-GPU
+# (avoids the multi-chunk/B>1 host-buffer indexing caveat noted in
+# cwt_hip.cpp/cwt_cuda.cu), with --verify -- a random sample of forward-CWT
+# output points compared against a CPU reference using the identical math.
+# Reports PASS/FAIL per implementation. See README's "Running" section.
+# ------------------------------------------------------------
+VERIFY_N       ?= 2048
+VERIFY_SAMPLES ?= 2000
+
+verify: build
+	@. ./setup-backends.sh; \
+	echo "==> Correctness check: --verify --verify-samples $(VERIFY_SAMPLES), N=$(VERIFY_N), single GPU"; \
+	if [[ "$$BACKENDS" == *"cuda"* ]]; then \
+		cuda_sm="sm_$${CUDA_DEV_TARGET#sm_}"; \
+		echo "--- CUDA / NVCC ---"; \
+		./cwt-cuda-nvcc --mode single --N $(VERIFY_N) --B 1 --csv /dev/null --forward-only \
+		  --verify --verify-samples $(VERIFY_SAMPLES) || exit 1; \
+		echo "--- CUDA / SCALE->NVIDIA ---"; \
+		( source "$(SCALE_ROOT)/bin/scaleenv" "$$cuda_sm" && \
+		  ./cwt-cuda-scale-nvidia --mode single --N $(VERIFY_N) --B 1 --csv /dev/null --forward-only \
+		    --verify --verify-samples $(VERIFY_SAMPLES) ) || exit 1; \
+	fi; \
+	if [[ "$$BACKENDS" == *"hip"* ]]; then \
+		hip_arch="$${HIP_DEV_TARGET:-gfx908}"; \
+		echo "--- HIP / HIPCC ---"; \
+		./cwt-hip-hipcc --mode single --N $(VERIFY_N) --B 1 --csv /dev/null --forward-only \
+		  --verify --verify-samples $(VERIFY_SAMPLES) || exit 1; \
+		echo "--- CUDA / SCALE->AMD ---"; \
+		( source "$(SCALE_ROOT)/bin/scaleenv" "$$hip_arch" && \
+		  ./cwt-cuda-scale-amd --mode single --N $(VERIFY_N) --B 1 --csv /dev/null --forward-only \
+		    --verify --verify-samples $(VERIFY_SAMPLES) ) || exit 1; \
+	fi
 
 # ------------------------------------------------------------
 # Plotting deps: pandas/matplotlib, in their own venv so this doesn't need

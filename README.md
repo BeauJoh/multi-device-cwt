@@ -44,13 +44,14 @@ To force every target regardless of `BACKENDS` (e.g. cross-checking on a dev box
 Each binary shares the same CLI:
 
 ```bash
-./cwt-cuda-nvcc --N <samples> --B <batch> --gpus <n> --mode explicit|single --csv results.csv [--forward-only]
+./cwt-cuda-nvcc --N <samples> --B <batch> --gpus <n> --mode explicit|single --csv results.csv [--forward-only] [--verify] [--verify-samples <k>]
 ```
 
 - `--N` — signal length (also used as the number of scales).
 - `--B` — batch size.
 - `--gpus` — number of devices to shard work across (`explicit` mode) or ignored (`single` mode, one device).
 - `--csv` — appends a results row (implementation, machine, backend, N, B, devices, wall time, GFLOP/s, etc.) to this file.
+- `--verify` — after the timed region, check a random sample of the forward-CWT output against a CPU reference computed with the identical math (same summation order, so it's a meaningful bit-level check, not just "close enough"). Off by default: without it, the `rel_err` column is `0.0` meaning *not checked*, not *verified correct* -- this was previously the unconditional, silent behavior for every row in every results CSV, i.e. no correctness check had actually ever been run. Prints `verify=PASS`/`FAIL` and the max sampled relative error; `--verify-samples <k>` controls how many random `(batch, scale, time)` points are checked (default 2000, fixed RNG seed so native and SCALE builds check the exact same points).
 
 Example, comparing all four builds at 4-way scaling on `N=2048`:
 
