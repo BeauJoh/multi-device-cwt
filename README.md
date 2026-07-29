@@ -44,7 +44,7 @@ To force every target regardless of `BACKENDS` (e.g. cross-checking on a dev box
 Each binary shares the same CLI:
 
 ```bash
-./cwt-cuda-nvcc --N <samples> --B <batch> --gpus <n> --mode explicit|single --csv results.csv [--forward-only] [--verify] [--verify-samples <k>] [--icwt] [--icwt-dir <dir>]
+./cwt-cuda-nvcc --N <samples> --B <batch> --gpus <n> --mode explicit|single --csv results.csv [--forward-only] [--verify] [--verify-samples <k>] [--icwt] [--icwt-dir <dir>] [--icwt-max-rel-rms <v>]
 ```
 
 - `--N` — signal length (also used as the number of scales).
@@ -52,7 +52,7 @@ Each binary shares the same CLI:
 - `--gpus` — number of devices to shard work across (`explicit` mode) or ignored (`single` mode, one device).
 - `--csv` — appends a results row (implementation, machine, backend, N, B, devices, wall time, GFLOP/s, etc.) to this file.
 - `--verify` — after the timed region, check a random sample of the forward-CWT output against a CPU reference computed with the identical math (same summation order, so it's a meaningful bit-level check, not just "close enough"). Off by default: without it, the `rel_err` column is `0.0` meaning *not checked*, not *verified correct* -- this was previously the unconditional, silent behavior for every row in every results CSV, i.e. no correctness check had actually ever been run. Prints `verify=PASS`/`FAIL` and the max sampled relative error; `--verify-samples <k>` controls how many random `(batch, scale, time)` points are checked (default 2000, fixed RNG seed so native and SCALE builds check the exact same points).
-- `--icwt` — after the timed region, run a host-side inverse-CWT (ICWT) round-trip demo on the already-computed forward output and dump CSVs for plotting (see "Inverse CWT (ICWT) round-trip demo" below). Requires `--B 1`. `--icwt-dir <dir>` sets where the CSVs land (default `results/icwt`).
+- `--icwt` — after the timed region, run a host-side inverse-CWT (ICWT) round-trip demo on the already-computed forward output and dump CSVs for plotting (see "Inverse CWT (ICWT) round-trip demo" below). Requires `--B 1`. `--icwt-dir <dir>` sets where the CSVs land (default `results/icwt`). `--icwt-max-rel-rms <v>` (default `0.05`, i.e. 5%) is a hard gate: if the reconstruction's relative RMS error exceeds it, the program prints `icwt=FAIL` and **exits with a nonzero status** (so `make icwt-demo`'s `|| exit 1` aborts the whole target rather than silently accepting a regression). On the current synthetic signal this normally sits at ~0.7-3.1% (well under the 5% gate) -- a FAIL here means something has actually regressed (e.g. an accidental change to the scale grid, wavelet, or reconstruction formula), not just normal run-to-run noise.
 
 Note on the scale grid: `scales` is a log-spaced range from `0.001` to `2.0` (`A` values, `A=N`), not a narrow linear band -- this matters for the ICWT round-trip below (a wide, log-spaced scale grid is needed for the classical CWT reconstruction formula to work well; a narrow band is fine for the forward transform but reconstructs poorly). Changing the scale *values* has no effect on any previously-collected timing/GFLOP-s numbers, since forward-transform cost only depends on the scale *count* (`A=N`) and `N`, never on the actual scale values.
 

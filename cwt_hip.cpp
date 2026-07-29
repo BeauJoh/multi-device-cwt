@@ -33,6 +33,7 @@ struct Args {
   long verify_samples = 2000;
   bool icwt = false;
   std::string icwt_dir = "results/icwt";
+  double icwt_max_rel_rms = 0.05;
   std::string mode = "explicit";
   std::string csv = "results.csv";
 };
@@ -192,16 +193,17 @@ static real_t cpu_forward_ref(
 // ICWT over an arbitrary, unknown signal, C would instead be a fixed
 // constant derived analytically from the wavelet and scale grid alone, not
 // fit against the answer.)
-static void run_icwt_demo(
+static bool run_icwt_demo(
     const std::vector<real_t>& h_fx,
     const std::vector<real_t>& h_cwt,
     const std::vector<real_t>& h_scales,
     const std::vector<real_t>& h_trans,
     int N, int A, int B,
-    const std::string& outdir) {
+    const std::string& outdir,
+    double max_rel_rms) {
   if (B != 1) {
     std::cout << "  icwt: skipped (only supported for --B 1)\n";
-    return;
+    return true;
   }
 
   std::vector<real_t> da(A);
@@ -236,7 +238,10 @@ static void run_icwt_demo(
   }
   real_t rel_rms = sig_ss > 0 ? std::sqrt(sse / N) / std::sqrt(sig_ss / N) : real_t(0);
 
-  std::cout << "  icwt: C=" << C << " rel_rms_err=" << rel_rms << "\n";
+  bool icwt_ok = rel_rms <= max_rel_rms;
+  std::cout << "  icwt: C=" << C << " rel_rms_err=" << rel_rms
+            << " max_rel_rms=" << max_rel_rms
+            << " icwt=" << (icwt_ok ? "PASS" : "FAIL") << "\n";
 
   std::system((std::string("mkdir -p ") + outdir).c_str());
 
@@ -265,6 +270,7 @@ static void run_icwt_demo(
     }
   }
   std::cout << "  icwt: wrote " << outdir << "/{signal,scales,coeffs}.csv\n";
+  return icwt_ok;
 }
 
 static double gflops_forward(int B, int A, int N, double sec) {
@@ -335,6 +341,8 @@ static Args parse_args(int argc, char** argv) {
       a.icwt = true;
     } else if (s == "--icwt-dir") {
       a.icwt_dir = need(s.c_str());
+    } else if (s == "--icwt-max-rel-rms") {
+      a.icwt_max_rel_rms = std::atof(need(s.c_str()));
     } else {
       throw std::runtime_error("unknown argument: " + s);
     }
@@ -571,8 +579,10 @@ int main(int argc, char** argv) {
               << " verify=" << (verify_pass ? "PASS" : "FAIL") << "\n";
   }
 
+  bool icwt_ok = true;
   if (args.icwt) {
-    run_icwt_demo(h_fx, h_cwt, h_scales, h_trans, N, A, B, args.icwt_dir);
+    icwt_ok = run_icwt_demo(h_fx, h_cwt, h_scales, h_trans, N, A, B,
+                             args.icwt_dir, args.icwt_max_rel_rms);
   }
 
   double gf = gflops_forward(B, A, N, fwd_s);
@@ -590,6 +600,12 @@ int main(int argc, char** argv) {
 
   append_csv(args.csv, N, B, A, chunks, fwd_s, rel_err);
   std::cout << "\nAppended results CSV: " << args.csv << "\n";
+
+  if (args.icwt && !icwt_ok) {
+    std::cerr << "error: icwt rel_rms_err exceeded --icwt-max-rel-rms ("
+              << args.icwt_max_rel_rms << ") -- aborting\n";
+    return 1;
+  }
 
   return 0;
 }

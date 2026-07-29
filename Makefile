@@ -345,8 +345,14 @@ verify: build
 # Produces, per implementation, a fixed-name 3-panel figure:
 # plots/icwt_demo_<impl>-N<size>.pdf/.png -- 1D input signal, 2D CWT
 # coefficient heatmap, 1D reconstructed signal overlaid on the original.
+#
+# Each binary run is gated by --icwt-max-rel-rms (default 0.05 = 5%,
+# override with ICWT_MAX_REL_RMS below): if the reconstruction's relative
+# RMS error exceeds it, the binary exits nonzero and this target aborts
+# (|| exit 1) rather than silently accepting a regressed round-trip.
 # ------------------------------------------------------------
 ICWT_N ?= 256
+ICWT_MAX_REL_RMS ?= 0.05
 
 icwt-demo: build | ensure-plot-deps
 	@. ./setup-backends.sh; \
@@ -355,24 +361,24 @@ icwt-demo: build | ensure-plot-deps
 		cuda_sm="sm_$${CUDA_DEV_TARGET#sm_}"; \
 		echo "--- CUDA / NVCC ---"; \
 		./cwt-cuda-nvcc --mode single --N $(ICWT_N) --B 1 --csv /dev/null --forward-only \
-		  --icwt --icwt-dir results/icwt-cuda-nvcc || exit 1; \
+		  --icwt --icwt-dir results/icwt-cuda-nvcc --icwt-max-rel-rms $(ICWT_MAX_REL_RMS) || exit 1; \
 		"$(PLOT_PY)" plotting/plot_icwt.py results/icwt-cuda-nvcc --outdir $(PLOTS_DIR) --label cuda-nvcc-N$(ICWT_N) || exit 1; \
 		echo "--- CUDA / SCALE->NVIDIA ---"; \
 		( source "$(SCALE_ROOT)/bin/scaleenv" "$$cuda_sm" && \
 		  ./cwt-cuda-scale-nvidia --mode single --N $(ICWT_N) --B 1 --csv /dev/null --forward-only \
-		    --icwt --icwt-dir results/icwt-scale-nvidia ) || exit 1; \
+		    --icwt --icwt-dir results/icwt-scale-nvidia --icwt-max-rel-rms $(ICWT_MAX_REL_RMS) ) || exit 1; \
 		"$(PLOT_PY)" plotting/plot_icwt.py results/icwt-scale-nvidia --outdir $(PLOTS_DIR) --label scale-nvidia-N$(ICWT_N) || exit 1; \
 	fi; \
 	if [[ "$$BACKENDS" == *"hip"* ]]; then \
 		hip_arch="$${HIP_DEV_TARGET:-gfx908}"; \
 		echo "--- HIP / HIPCC ---"; \
 		./cwt-hip-hipcc --mode single --N $(ICWT_N) --B 1 --csv /dev/null --forward-only \
-		  --icwt --icwt-dir results/icwt-hip-hipcc || exit 1; \
+		  --icwt --icwt-dir results/icwt-hip-hipcc --icwt-max-rel-rms $(ICWT_MAX_REL_RMS) || exit 1; \
 		"$(PLOT_PY)" plotting/plot_icwt.py results/icwt-hip-hipcc --outdir $(PLOTS_DIR) --label hip-hipcc-N$(ICWT_N) || exit 1; \
 		echo "--- CUDA / SCALE->AMD ---"; \
 		( source "$(SCALE_ROOT)/bin/scaleenv" "$$hip_arch" && \
 		  ./cwt-cuda-scale-amd --mode single --N $(ICWT_N) --B 1 --csv /dev/null --forward-only \
-		    --icwt --icwt-dir results/icwt-scale-amd ) || exit 1; \
+		    --icwt --icwt-dir results/icwt-scale-amd --icwt-max-rel-rms $(ICWT_MAX_REL_RMS) ) || exit 1; \
 		"$(PLOT_PY)" plotting/plot_icwt.py results/icwt-scale-amd --outdir $(PLOTS_DIR) --label scale-amd-N$(ICWT_N) || exit 1; \
 	fi; \
 	echo "==> figures written to $(PLOTS_DIR)/icwt_demo_<impl>-N$(ICWT_N).pdf/.png"
