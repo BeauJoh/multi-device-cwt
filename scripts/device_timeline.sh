@@ -32,17 +32,16 @@ set -o pipefail  # deliberately no -e: setup-backends.sh/scaleenv rely on
 
 cd "$(dirname "$0")/.."
 
-# Same environment setup `make build`/`make sweep` use.
+# Same environment setup `make build`/`make sweep` use. Deliberately *not*
+# adding any extra LD_LIBRARY_PATH entries beyond what setup-backends.sh and
+# (for SCALE targets, below) scaleenv already set up -- that was tried and
+# is actively harmful: forcing /opt/rocm/lib onto LD_LIBRARY_PATH ahead of
+# scaleenv's own setup (even just as a fallback placed before it) makes
+# cwt-cuda-scale-amd abort with "No CUDA devices found". Confirmed by a
+# plain manual run (setup-backends.sh + scaleenv, nothing else) working
+# correctly, matching how `make sweep`/`make build` already invoke these
+# binaries.
 . ./setup-backends.sh
-
-# Make sure ROCm's own lib dirs are on LD_LIBRARY_PATH as a fallback *before*
-# scaleenv (below) prepends SCALE's bundled dir in front of this. SCALE's own
-# libhsa-runtime64.so/libamdhip64.so still win (they're first on the path),
-# preserving correctness, but anything SCALE's bundle doesn't ship itself
-# (e.g. libamd_comgr.so, used for on-the-fly kernel finalization) still
-# resolves instead of failing at runtime -- without this, cwt-cuda-scale-amd
-# aborts with "No CUDA devices found" even with no profiler involved at all.
-export LD_LIBRARY_PATH="${ROCM_PATH:-/opt/rocm}/lib:${ROCM_PATH:-/opt/rocm}/lib64:${LD_LIBRARY_PATH:-}"
 
 BIN=${1:?usage: $0 <path-to-binary> [args...]}
 shift
