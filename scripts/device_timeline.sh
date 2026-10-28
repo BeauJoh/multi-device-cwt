@@ -42,7 +42,7 @@ shift
 # The cwt-cuda-scale-* binaries are SCALE builds and only run correctly with
 # SCALE's own runtime libraries on LD_LIBRARY_PATH, which `scaleenv` sets up
 # -- same as the `( source .../scaleenv ... )` subshells in `make sweep`.
-SCALE_ROOT="${SCALE_ROOT:-${SCALE_DIR:-$(pwd)/scale-1.7.2}}"
+SCALE_ROOT="${SCALE_ROOT:-${SCALE_DIR:-$(pwd)/scale-latest}}"
 if [[ "$(basename "$BIN")" == *scale* ]]; then
   if [ ! -f "$SCALE_ROOT/bin/scaleenv" ]; then
     echo "error: $BIN looks like a SCALE build but $SCALE_ROOT/bin/scaleenv is missing (run 'make ensure-scale' first)" >&2

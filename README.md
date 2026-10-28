@@ -21,7 +21,7 @@ A small benchmark for scaling Continuous Wavelet Transforms (CWT) across multipl
 
 - A CUDA toolkit (`nvcc`) for the native and SCALE→NVIDIA builds.
 - ROCm/HIP (`hipcc`) for the native HIP build.
-- A SCALE install, unpacked at `./scale-1.7.2` (or point `SCALE_ROOT` elsewhere) for the two `scale-*` builds. You don't need to install this yourself — `make cwt-cuda-scale-nvidia` / `make cwt-cuda-scale-amd` depend on an `ensure-scale` target that downloads and unpacks SCALE 1.7.2 (pinned, via `SCALE_TARBALL_URL`) automatically if it's missing.
+- A SCALE install, unpacked at `./scale-latest` (or point `SCALE_DIR` / `SCALE_ROOT` at an existing install) for the two `scale-*` builds. You don't need to install this yourself — `make cwt-cuda-scale-nvidia` / `make cwt-cuda-scale-amd` depend on an `ensure-scale` target that downloads and unpacks the latest SCALE release (`scale-latest-amd64.tar.xz`, ~3.4 GB; override with `SCALE_TARBALL_URL` to pin a version) automatically if it's missing. An existing `./scale-latest` is not refreshed; delete it to re-download. Record the version you ran (`scaleenv` prints it) alongside any results.
 - Your shell environment provides the toolchain: put the right `nvcc` / `hipcc` on `PATH` (e.g. `module load` / `module swap`) before running `make`. In NVIDIA mode SCALE uses whichever CUDA toolkit `scaleenv` finds (its "Using cuda install at…" line), so pick a SCALE-supported one in your shell first.
 - No per-host config file. The Makefile detects what it needs from the installed GPUs and you can override any of it on the command line:
 
@@ -30,7 +30,7 @@ A small benchmark for scaling Continuous Wavelet Transforms (CWT) across multipl
   | `BACKENDS` | `cuda`, `hip`, or both | detected (`nvidia-smi -L`, `rocminfo`) |
   | `CUDA_ARCH` | compute capability, `90` or `sm_90` | detected (`nvidia-smi`) |
   | `HIP_ARCH` | gfx target, e.g. `gfx950` | detected (`rocminfo`) |
-  | `SCALE_DIR` (or `SCALE_ROOT`) | SCALE install holding `bin/scaleenv` | `./scale-1.7.2` (auto-downloaded) |
+  | `SCALE_DIR` (or `SCALE_ROOT`) | SCALE install holding `bin/scaleenv` | `./scale-latest` (auto-downloaded) |
   | `MACHINE` | label written to the results CSV | `hostname -s` |
   | `REMOTE_HOST` | ssh alias of the other box for `megaplot` | unset (megaplot skipped) |
 

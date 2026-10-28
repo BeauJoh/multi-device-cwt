@@ -10,7 +10,7 @@ CWT_HIP_SRC  ?= cwt_hip.cpp
 NVIDIA_NVCC ?= $(shell command -v nvcc 2>/dev/null)
 CUDA_NVCC   ?= $(NVIDIA_NVCC)
 CUDA_ARCH   ?= $(patsubst sm_%,%,$(CUDA_DEV_TARGET))
-SCALE_ROOT  ?= $(or $(SCALE_DIR),$(CURDIR)/scale-1.7.2)
+SCALE_ROOT  ?= $(or $(SCALE_DIR),$(CURDIR)/scale-latest)
 
 HIP_HIPCC ?= hipcc
 HIP_ARCH  ?= $(HIP_DEV_TARGET)
@@ -44,7 +44,7 @@ endif
 # Passed through to scripts/device_timeline.sh.
 export CUDA_SM HIP_ARCH SCALE_ROOT
 
-SCALE_TARBALL_URL ?= https://pkgs.scale-lang.com/tar/scale-1.7.2-amd64.tar.xz
+SCALE_TARBALL_URL ?= https://pkgs.scale-lang.com/tar/scale-latest-amd64.tar.xz
 
 # ------------------------------------------------------------
 # Sweep defaults
