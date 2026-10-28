@@ -64,6 +64,13 @@ CSV         ?= $(RESULTS_DIR)/scaling.csv
 # a lower REPS for it) only if you've got the time budget for it.
 SIZES ?= 2048 4096 8192 16384
 
+# WEAK=1 makes `sweep` use B = number of GPUs instead of a fixed B, so the
+# work per GPU stays constant (each device processes all B for its own range
+# of scales). `make sweep-weak` is the multi-size version, written to
+# $(WEAK_CSV) (columns B and devices record what was run).
+WEAK ?=
+WEAK_CSV ?= $(RESULTS_DIR)/weak.csv
+
 # ------------------------------------------------------------
 # Megaplot: pull the other box's results over ssh and plot both together
 # ------------------------------------------------------------
@@ -73,7 +80,7 @@ REMOTE_PATH ?= /home/smc/multi-device-cwt
 METRIC      ?= fwd_gflops
 PLOTS_DIR   ?= plots
 
-.PHONY: all build sweep sweep-sizes megaplot device-timelines verify icwt-demo clean clean-results clean-plot-deps \
+.PHONY: all build sweep sweep-sizes sweep-weak megaplot device-timelines verify icwt-demo clean clean-results clean-plot-deps \
         cwt-cuda-nvcc cwt-hip-hipcc \
         cwt-cuda-scale-nvidia cwt-cuda-scale-amd \
         ensure-scale ensure-plot-deps
@@ -110,7 +117,7 @@ cwt-cuda-nvcc: $(CWT_CUDA_SRC)
 # Native HIP build via hipcc. Same self-contained approach as cwt-cuda-nvcc.
 cwt-hip-hipcc: $(CWT_HIP_SRC)
 	hip_arch="$(HIP_ARCH)"; \
-	$(HIP_HIPCC) -O3 -std=c++17 --offload-arch="$$hip_arch" -o $@ $<
+	$(HIP_HIPCC) -O3 -std=c++17 --offload-arch="$$hip_arch" $(HIPFLAGS) -o $@ $<
 
 # ------------------------------------------------------------
 # Ensure SCALE is installed
@@ -194,14 +201,15 @@ sweep: build
 		fi; \
 		echo "==> $(MACHINE) ($(MACHINE)): sweeping CUDA GPUs 1..$$ndev, $(REPS) reps, N=$(N) B=$(B)"; \
 		for gpus in $$(seq 1 "$$ndev"); do \
+			b=$(B); if [ -n "$(WEAK)" ]; then b=$$gpus; fi; \
 			for rep in $$(seq 1 $(REPS)); do \
 				echo "--- CUDA/NVCC gpus=$$gpus rep=$$rep/$(REPS) ---"; \
 				CWT_IMPL="CUDA / NVCC" CWT_BACKEND="CUDA" CWT_MACHINE="$(MACHINE)" \
-				  ./cwt-cuda-nvcc --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only; \
+				  ./cwt-cuda-nvcc --mode explicit --N $(N) --B $$b --gpus $$gpus --csv "$(CSV)" --forward-only; \
 				echo "--- CUDA/SCALE-NVIDIA gpus=$$gpus rep=$$rep/$(REPS) ---"; \
 				( source "$(SCALE_ROOT)/bin/scaleenv" "$$sweep_cuda_sm" && \
 				  CWT_IMPL="CUDA / SCALE→NVIDIA" CWT_BACKEND="CUDA" CWT_MACHINE="$(MACHINE)" \
-				  ./cwt-cuda-scale-nvidia --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only ); \
+				  ./cwt-cuda-scale-nvidia --mode explicit --N $(N) --B $$b --gpus $$gpus --csv "$(CSV)" --forward-only ); \
 			done; \
 		done; \
 		ran_any=1; \
@@ -213,14 +221,15 @@ sweep: build
 		fi; \
 		echo "==> $(MACHINE) ($(MACHINE)): sweeping HIP GPUs 1..$$ndev, $(REPS) reps, N=$(N) B=$(B)"; \
 		for gpus in $$(seq 1 "$$ndev"); do \
+			b=$(B); if [ -n "$(WEAK)" ]; then b=$$gpus; fi; \
 			for rep in $$(seq 1 $(REPS)); do \
 				echo "--- HIP/HIPCC gpus=$$gpus rep=$$rep/$(REPS) ---"; \
 				CWT_IMPL="HIP / HIPCC" CWT_BACKEND="HIP" CWT_MACHINE="$(MACHINE)" \
-				  ./cwt-hip-hipcc --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only; \
+				  ./cwt-hip-hipcc --mode explicit --N $(N) --B $$b --gpus $$gpus --csv "$(CSV)" --forward-only; \
 				echo "--- CUDA/SCALE-AMD gpus=$$gpus rep=$$rep/$(REPS) ---"; \
 				( source "$(SCALE_ROOT)/bin/scaleenv" "$$sweep_hip_arch" && \
 				  CWT_IMPL="CUDA / SCALE→AMD" CWT_BACKEND="HIP" CWT_MACHINE="$(MACHINE)" \
-				  ./cwt-cuda-scale-amd --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only ); \
+				  ./cwt-cuda-scale-amd --mode explicit --N $(N) --B $$b --gpus $$gpus --csv "$(CSV)" --forward-only ); \
 			done; \
 		done; \
 		ran_any=1; \
@@ -259,6 +268,9 @@ sweep-sizes:
 	else \
 		echo "==> REMOTE_HOST not set -- skipping megaplot; run 'make megaplot REMOTE_HOST=<other box>' manually"; \
 	fi
+
+sweep-weak:
+	$(MAKE) sweep-sizes WEAK=1 CSV="$(WEAK_CSV)"
 
 # ------------------------------------------------------------
 # Device timelines from the shared ##DEVICE_TIMELINE host-side
