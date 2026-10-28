@@ -26,22 +26,15 @@
 # Set LABEL explicitly (e.g. from `make device-timelines`) for a fixed,
 # reproducible filename with no timestamp -- reruns overwrite in place, which
 # is what you want when pulling a fixed set of figures into a paper.
-set -o pipefail  # deliberately no -e: setup-backends.sh/scaleenv rely on
-# non-fatal command failures (e.g. missing `module` binary) being tolerated,
-# same as how GNU Make runs recipe lines without -e by default.
+set -o pipefail  # deliberately no -e: scaleenv relies on non-fatal command
+# failures being tolerated, same as GNU Make recipe lines without -e.
 
 cd "$(dirname "$0")/.."
 
-# Same environment setup `make build`/`make sweep` use. Deliberately *not*
-# adding any extra LD_LIBRARY_PATH entries beyond what setup-backends.sh and
-# (for SCALE targets, below) scaleenv already set up -- that was tried and
-# is actively harmful: forcing /opt/rocm/lib onto LD_LIBRARY_PATH ahead of
-# scaleenv's own setup (even just as a fallback placed before it) makes
-# cwt-cuda-scale-amd abort with "No CUDA devices found". Confirmed by a
-# plain manual run (setup-backends.sh + scaleenv, nothing else) working
-# correctly, matching how `make sweep`/`make build` already invoke these
-# binaries.
-. ./setup-backends.sh
+# Toolchain selection (module load/swap, PATH, ...) is the caller's shell
+# environment. SCALE targets come from CUDA_SM / HIP_ARCH, which `make
+# device-timelines` exports; when running this script by hand, set them
+# yourself (e.g. HIP_ARCH=gfx950 or CUDA_SM=sm_90).
 
 BIN=${1:?usage: $0 <path-to-binary> [args...]}
 shift
@@ -49,16 +42,17 @@ shift
 # The cwt-cuda-scale-* binaries are SCALE builds and only run correctly with
 # SCALE's own runtime libraries on LD_LIBRARY_PATH, which `scaleenv` sets up
 # -- same as the `( source .../scaleenv ... )` subshells in `make sweep`.
-SCALE_ROOT="${SCALE_ROOT:-$(pwd)/scale-1.7.2}"
+SCALE_ROOT="${SCALE_ROOT:-${SCALE_DIR:-$(pwd)/scale-1.7.2}}"
 if [[ "$(basename "$BIN")" == *scale* ]]; then
   if [ ! -f "$SCALE_ROOT/bin/scaleenv" ]; then
     echo "error: $BIN looks like a SCALE build but $SCALE_ROOT/bin/scaleenv is missing (run 'make ensure-scale' first)" >&2
     exit 1
   fi
-  hip_arch="${HIP_DEV_TARGET:-gfx908}"
-  cuda_sm="sm_${CUDA_DEV_TARGET#sm_}"
-  scale_arch="$hip_arch"
-  [[ "$(basename "$BIN")" == *scale-nvidia* ]] && scale_arch="$cuda_sm"
+  if [[ "$(basename "$BIN")" == *scale-nvidia* ]]; then
+    scale_arch="${CUDA_SM:?set CUDA_SM (e.g. sm_90) for a SCALE->NVIDIA run}"
+  else
+    scale_arch="${HIP_ARCH:?set HIP_ARCH (e.g. gfx950) for a SCALE->AMD run}"
+  fi
   source "$SCALE_ROOT/bin/scaleenv" "$scale_arch"
 fi
 

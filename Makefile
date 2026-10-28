@@ -10,10 +10,39 @@ CWT_HIP_SRC  ?= cwt_hip.cpp
 NVIDIA_NVCC ?= $(shell command -v nvcc 2>/dev/null)
 CUDA_NVCC   ?= $(NVIDIA_NVCC)
 CUDA_ARCH   ?= $(patsubst sm_%,%,$(CUDA_DEV_TARGET))
-SCALE_ROOT  ?= $(CURDIR)/scale-1.7.2
+SCALE_ROOT  ?= $(or $(SCALE_DIR),$(CURDIR)/scale-1.7.2)
 
 HIP_HIPCC ?= hipcc
-HIP_ARCH  ?= $(if $(HIP_DEV_TARGET),$(HIP_DEV_TARGET),gfx908)
+HIP_ARCH  ?= $(HIP_DEV_TARGET)
+
+# ------------------------------------------------------------
+# Device-derived configuration. There is no per-host config file: anything
+# not given on the command line / environment is detected from the GPUs
+# present, e.g.  make BACKENDS=hip HIP_ARCH=gfx950 MACHINE=MI355X
+# Toolchain selection (module load/swap, PATH, CUDA_PATH, ROCM_PATH, which
+# CUDA toolkit SCALE sees) is the caller's shell environment, not this file.
+# ------------------------------------------------------------
+
+# Label written to the results CSV (CWT_MACHINE); not used for any logic.
+MACHINE ?= $(shell hostname -s)
+
+# Backends to build/run: "cuda" and/or "hip" (substring match).
+ifndef BACKENDS
+BACKENDS := $(strip $(if $(shell nvidia-smi -L 2>/dev/null),cuda) $(if $(shell rocminfo 2>/dev/null | grep -m1 'Device Type:.*GPU'),hip))
+endif
+
+# GPU targets: CUDA_ARCH is the compute capability (90 or sm_90 both work),
+# HIP_ARCH the gfx name (gfx950).
+ifeq ($(strip $(CUDA_ARCH)),)
+CUDA_ARCH := $(subst .,,$(firstword $(shell nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null)))
+endif
+CUDA_SM := sm_$(patsubst sm_%,%,$(CUDA_ARCH))
+ifeq ($(strip $(HIP_ARCH)),)
+HIP_ARCH := $(shell rocminfo 2>/dev/null | awk '/^  Name:.*gfx/{print $$2; exit}')
+endif
+
+# Passed through to scripts/device_timeline.sh.
+export CUDA_SM HIP_ARCH SCALE_ROOT
 
 SCALE_TARBALL_URL ?= https://pkgs.scale-lang.com/tar/scale-1.7.2-amd64.tar.xz
 
@@ -49,49 +78,38 @@ PLOTS_DIR   ?= plots
         cwt-cuda-scale-nvidia cwt-cuda-scale-amd \
         ensure-scale ensure-plot-deps
 
-# Plain `make` builds only what this host actually supports (per BACKENDS
-# from setup-backends.sh). `make all` always forces every target, useful on
+# Plain `make` builds only what this host actually supports (per BACKENDS,
+# auto-detected from the installed GPUs unless set). `make all` always forces every target, useful on
 # a dev box like `zenith` that has both toolchains installed.
 .DEFAULT_GOAL := build
 
 all: cwt-cuda-nvcc cwt-hip-hipcc cwt-cuda-scale-nvidia cwt-cuda-scale-amd
 
 # Build only the targets relevant to this host's BACKENDS (cuda and/or hip),
-# as reported by setup-backends.sh. No need to `source` it first — this
-# sources it itself.
+# (detected, or set on the command line).
 build:
-	@. ./setup-backends.sh; \
-	targets=""; \
-	if [[ "$$BACKENDS" == *"cuda"* ]]; then targets="$$targets cwt-cuda-nvcc cwt-cuda-scale-nvidia"; fi; \
-	if [[ "$$BACKENDS" == *"hip"* ]]; then targets="$$targets cwt-hip-hipcc cwt-cuda-scale-amd"; fi; \
+	@targets=""; \
+	if [[ "$(BACKENDS)" == *"cuda"* ]]; then targets="$$targets cwt-cuda-nvcc cwt-cuda-scale-nvidia"; fi; \
+	if [[ "$(BACKENDS)" == *"hip"* ]]; then targets="$$targets cwt-hip-hipcc cwt-cuda-scale-amd"; fi; \
 	if [ -z "$$targets" ]; then \
-		echo "error: no supported backend found in BACKENDS='$$BACKENDS' (host: $$HOST)" >&2; \
+		echo "error: no supported backend found in BACKENDS='$(BACKENDS)' (host: $(MACHINE))" >&2; \
 		exit 1; \
 	fi; \
-	echo "==> $$HOST: BACKENDS=$$BACKENDS -> building:$$targets"; \
+	echo "==> $(MACHINE): BACKENDS=$(BACKENDS) -> building:$$targets"; \
 	$(MAKE) $$targets
 
 # ------------------------------------------------------------
 # Native builds
 # ------------------------------------------------------------
 
-# Native CUDA build via nvcc. Sources setup-backends.sh itself and resolves
-# the arch from the shell env it produces (HIP_DEV_TARGET/CUDA_DEV_TARGET),
-# rather than Make's own $(CUDA_ARCH) — that Make variable is only fresh
-# when this recipe happens to run inside build's recursive $(MAKE) call; if
-# you invoke this target directly without having sourced setup-backends.sh
-# yourself first, Make's copy is stale/empty. Falls back to $(CUDA_ARCH) /
-# $(CUDA_NVCC) if for some reason the shell env doesn't have it either.
+# Native CUDA build via nvcc (the nvcc on PATH, i.e. your shell's toolchain).
 cwt-cuda-nvcc: $(CWT_CUDA_SRC)
-	. ./setup-backends.sh; \
-	cuda_sm="sm_$${CUDA_DEV_TARGET#sm_}"; \
-	[ "$$cuda_sm" != "sm_" ] || cuda_sm="sm_$(CUDA_ARCH)"; \
+	cuda_sm="$(CUDA_SM)"; \
 	nvcc -O3 -std=c++17 -arch="$$cuda_sm" -o $@ $<
 
 # Native HIP build via hipcc. Same self-contained approach as cwt-cuda-nvcc.
 cwt-hip-hipcc: $(CWT_HIP_SRC)
-	. ./setup-backends.sh; \
-	hip_arch="$${HIP_DEV_TARGET:-$(HIP_ARCH)}"; \
+	hip_arch="$(HIP_ARCH)"; \
 	$(HIP_HIPCC) -O3 -std=c++17 --offload-arch="$$hip_arch" -o $@ $<
 
 # ------------------------------------------------------------
@@ -137,35 +155,23 @@ ensure-scale:
 # SCALE builds (same CUDA source, compiled via SCALE's nvcc)
 # ------------------------------------------------------------
 
-# CUDA source built through SCALE, targeting NVIDIA hardware. Resolves arch
-# from the shell env (see cwt-cuda-nvcc comment above for why), not Make's
-# $(CUDA_ARCH). If SCALE_CUDA_PATH is set (setup-backends.sh sets it for
-# hosts where the installed CUDA version is newer than SCALE's clang can
-# parse, e.g. the H100 box: CUDA 13.3 vs SCALE 1.7.2's supported 13.1), it
-# overrides CUDA_PATH just for this build, leaving the native cwt-cuda-nvcc
-# build on the host's regular CUDA_PATH.
+# CUDA source built through SCALE, targeting NVIDIA hardware. In NVIDIA mode
+# SCALE supplies only the compiler and uses the CUDA toolkit that scaleenv
+# finds on PATH ("Using cuda install at..."), so pick a SCALE-supported
+# toolkit in your shell before running make (e.g. `module swap ...`).
+# Extra compiler flags can be passed as NVCCFLAGS=...
 cwt-cuda-scale-nvidia: $(CWT_CUDA_SRC) | ensure-scale
-	. ./setup-backends.sh; \
-	cuda_sm="sm_$${CUDA_DEV_TARGET#sm_}"; \
-	[ "$$cuda_sm" != "sm_" ] || cuda_sm="sm_$(CUDA_ARCH)"; \
+	cuda_sm="$(CUDA_SM)"; \
 	cuda_compute="$${cuda_sm#sm_}"; \
-	if [ -n "$${SCALE_CUDA_PATH:-}" ]; then \
-		echo "==> overriding CUDA_PATH for SCALE build: $$SCALE_CUDA_PATH"; \
-		export CUDA_PATH="$$SCALE_CUDA_PATH"; \
-	fi; \
 	source "$(SCALE_ROOT)/bin/scaleenv" "$$cuda_sm" && \
 	nvcc \
 	  -gencode arch=compute_$$cuda_compute,code=$$cuda_sm \
 	  $(NVCCFLAGS) \
-	  $$CPPFLAGS \
-	  -o $@ $< \
-	  $$LDFLAGS \
-	  $$LDLIBS
+	  -o $@ $<
 
 # Same CUDA source built through SCALE, targeting AMD hardware.
 cwt-cuda-scale-amd: $(CWT_CUDA_SRC) | ensure-scale
-	. ./setup-backends.sh; \
-	hip_arch="$${HIP_DEV_TARGET:-$(HIP_ARCH)}"; \
+	hip_arch="$(HIP_ARCH)"; \
 	source "$(SCALE_ROOT)/bin/scaleenv" "$$hip_arch" && \
 	nvcc -O3 -std=c++17 -o $@ $<
 
@@ -177,61 +183,60 @@ cwt-cuda-scale-amd: $(CWT_CUDA_SRC) | ensure-scale
 # so this scales the sweep to whatever's actually plugged in.
 # ------------------------------------------------------------
 sweep: build
-	@. ./setup-backends.sh; \
-	mkdir -p "$(RESULTS_DIR)"; \
+	@mkdir -p "$(RESULTS_DIR)"; \
 	ran_any=0; \
-	sweep_hip_arch="$${HIP_DEV_TARGET:-gfx908}"; \
-	sweep_cuda_sm="sm_$${CUDA_DEV_TARGET#sm_}"; \
-	if [[ "$$BACKENDS" == *"cuda"* ]]; then \
+	sweep_hip_arch="$(HIP_ARCH)"; \
+	sweep_cuda_sm="$(CUDA_SM)"; \
+	if [[ "$(BACKENDS)" == *"cuda"* ]]; then \
 		ndev="$$(nvidia-smi -L 2>/dev/null | wc -l)"; \
 		if [ -z "$$ndev" ] || [ "$$ndev" -lt 1 ]; then \
 			echo "error: BACKENDS contains cuda but nvidia-smi reports no devices" >&2; exit 1; \
 		fi; \
-		echo "==> $$HOST ($$MACHINE): sweeping CUDA GPUs 1..$$ndev, $(REPS) reps, N=$(N) B=$(B)"; \
+		echo "==> $(MACHINE) ($(MACHINE)): sweeping CUDA GPUs 1..$$ndev, $(REPS) reps, N=$(N) B=$(B)"; \
 		for gpus in $$(seq 1 "$$ndev"); do \
 			for rep in $$(seq 1 $(REPS)); do \
 				echo "--- CUDA/NVCC gpus=$$gpus rep=$$rep/$(REPS) ---"; \
-				CWT_IMPL="CUDA / NVCC" CWT_BACKEND="CUDA" CWT_MACHINE="$$MACHINE" \
+				CWT_IMPL="CUDA / NVCC" CWT_BACKEND="CUDA" CWT_MACHINE="$(MACHINE)" \
 				  ./cwt-cuda-nvcc --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only; \
 				echo "--- CUDA/SCALE-NVIDIA gpus=$$gpus rep=$$rep/$(REPS) ---"; \
 				( source "$(SCALE_ROOT)/bin/scaleenv" "$$sweep_cuda_sm" && \
-				  CWT_IMPL="CUDA / SCALE→NVIDIA" CWT_BACKEND="CUDA" CWT_MACHINE="$$MACHINE" \
+				  CWT_IMPL="CUDA / SCALE→NVIDIA" CWT_BACKEND="CUDA" CWT_MACHINE="$(MACHINE)" \
 				  ./cwt-cuda-scale-nvidia --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only ); \
 			done; \
 		done; \
 		ran_any=1; \
 	fi; \
-	if [[ "$$BACKENDS" == *"hip"* ]]; then \
+	if [[ "$(BACKENDS)" == *"hip"* ]]; then \
 		ndev="$$(rocminfo 2>/dev/null | grep -c 'Device Type:.*GPU')"; \
 		if [ -z "$$ndev" ] || [ "$$ndev" -lt 1 ]; then \
 			echo "error: BACKENDS contains hip but rocminfo reports no GPU devices" >&2; exit 1; \
 		fi; \
-		echo "==> $$HOST ($$MACHINE): sweeping HIP GPUs 1..$$ndev, $(REPS) reps, N=$(N) B=$(B)"; \
+		echo "==> $(MACHINE) ($(MACHINE)): sweeping HIP GPUs 1..$$ndev, $(REPS) reps, N=$(N) B=$(B)"; \
 		for gpus in $$(seq 1 "$$ndev"); do \
 			for rep in $$(seq 1 $(REPS)); do \
 				echo "--- HIP/HIPCC gpus=$$gpus rep=$$rep/$(REPS) ---"; \
-				CWT_IMPL="HIP / HIPCC" CWT_BACKEND="HIP" CWT_MACHINE="$$MACHINE" \
+				CWT_IMPL="HIP / HIPCC" CWT_BACKEND="HIP" CWT_MACHINE="$(MACHINE)" \
 				  ./cwt-hip-hipcc --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only; \
 				echo "--- CUDA/SCALE-AMD gpus=$$gpus rep=$$rep/$(REPS) ---"; \
 				( source "$(SCALE_ROOT)/bin/scaleenv" "$$sweep_hip_arch" && \
-				  CWT_IMPL="CUDA / SCALE→AMD" CWT_BACKEND="HIP" CWT_MACHINE="$$MACHINE" \
+				  CWT_IMPL="CUDA / SCALE→AMD" CWT_BACKEND="HIP" CWT_MACHINE="$(MACHINE)" \
 				  ./cwt-cuda-scale-amd --mode explicit --N $(N) --B $(B) --gpus $$gpus --csv "$(CSV)" --forward-only ); \
 			done; \
 		done; \
 		ran_any=1; \
 	fi; \
 	if [ "$$ran_any" -eq 0 ]; then \
-		echo "error: no supported backend found in BACKENDS='$$BACKENDS' (host: $$HOST)" >&2; exit 1; \
+		echo "error: no supported backend found in BACKENDS='$(BACKENDS)' (host: $(MACHINE))" >&2; exit 1; \
 	fi; \
 	echo "==> results appended to $(CSV)"; \
 	if [ -n "$${SKIP_MEGAPLOT:-}" ]; then \
 		echo "==> SKIP_MEGAPLOT set -- not auto-running megaplot for this size"; \
-	elif [ -n "$${REMOTE_HOST:-}" ]; then \
-		echo "==> auto-running megaplot against $$REMOTE_HOST"; \
-		$(MAKE) megaplot REMOTE_HOST="$$REMOTE_HOST" || \
-			echo "warning: megaplot failed (other box may not have swept yet) -- run 'make megaplot REMOTE_HOST=$$REMOTE_HOST' manually once it has" >&2; \
+	elif [ -n "$(REMOTE_HOST)" ]; then \
+		echo "==> auto-running megaplot against $(REMOTE_HOST)"; \
+		$(MAKE) megaplot REMOTE_HOST="$(REMOTE_HOST)" || \
+			echo "warning: megaplot failed (other box may not have swept yet) -- run 'make megaplot REMOTE_HOST=$(REMOTE_HOST)' manually once it has" >&2; \
 	else \
-		echo "==> REMOTE_HOST not set (see setup-backends.sh) -- skipping megaplot; run 'make megaplot REMOTE_HOST=<other box>' manually"; \
+		echo "==> REMOTE_HOST not set -- skipping megaplot; run 'make megaplot REMOTE_HOST=<other box>' manually"; \
 	fi
 
 # ------------------------------------------------------------
@@ -241,19 +246,18 @@ sweep: build
 # per size.
 # ------------------------------------------------------------
 sweep-sizes:
-	@. ./setup-backends.sh; \
-	for n in $(SIZES); do \
+	@for n in $(SIZES); do \
 		echo "==================================================================="; \
 		echo "==> sweep-sizes: N=$$n"; \
 		echo "==================================================================="; \
 		SKIP_MEGAPLOT=1 $(MAKE) sweep N="$$n" REPS=$(REPS) CSV="$(CSV)" || exit 1; \
 	done; \
-	if [ -n "$${REMOTE_HOST:-}" ]; then \
-		echo "==> auto-running megaplot against $$REMOTE_HOST"; \
-		$(MAKE) megaplot REMOTE_HOST="$$REMOTE_HOST" || \
-			echo "warning: megaplot failed (other box may not have swept yet) -- run 'make megaplot REMOTE_HOST=$$REMOTE_HOST' manually once it has" >&2; \
+	if [ -n "$(REMOTE_HOST)" ]; then \
+		echo "==> auto-running megaplot against $(REMOTE_HOST)"; \
+		$(MAKE) megaplot REMOTE_HOST="$(REMOTE_HOST)" || \
+			echo "warning: megaplot failed (other box may not have swept yet) -- run 'make megaplot REMOTE_HOST=$(REMOTE_HOST)' manually once it has" >&2; \
 	else \
-		echo "==> REMOTE_HOST not set (see setup-backends.sh) -- skipping megaplot; run 'make megaplot REMOTE_HOST=<other box>' manually"; \
+		echo "==> REMOTE_HOST not set -- skipping megaplot; run 'make megaplot REMOTE_HOST=<other box>' manually"; \
 	fi
 
 # ------------------------------------------------------------
@@ -271,12 +275,11 @@ DEVICE_TIMELINE_SIZES ?= 2048 16384
 DEVICE_TIMELINE_GPUS  ?= 8
 
 device-timelines: build
-	@. ./setup-backends.sh; \
-	for n in $(DEVICE_TIMELINE_SIZES); do \
+	@for n in $(DEVICE_TIMELINE_SIZES); do \
 		echo "==================================================================="; \
 		echo "==> device-timelines: N=$$n"; \
 		echo "==================================================================="; \
-		if [[ "$$BACKENDS" == *"cuda"* ]]; then \
+		if [[ "$(BACKENDS)" == *"cuda"* ]]; then \
 			ndev="$$(nvidia-smi -L 2>/dev/null | wc -l)"; \
 			gpus=$(DEVICE_TIMELINE_GPUS); [ "$$gpus" -le "$$ndev" ] || gpus="$$ndev"; \
 			LABEL="cuda-nvcc-N$$n" scripts/device_timeline.sh ./cwt-cuda-nvcc \
@@ -284,7 +287,7 @@ device-timelines: build
 			LABEL="scale-nvidia-N$$n" scripts/device_timeline.sh ./cwt-cuda-scale-nvidia \
 			  --mode explicit --N "$$n" --B $(B) --gpus "$$gpus" --csv /dev/null --forward-only || exit 1; \
 		fi; \
-		if [[ "$$BACKENDS" == *"hip"* ]]; then \
+		if [[ "$(BACKENDS)" == *"hip"* ]]; then \
 			ndev="$$(rocminfo 2>/dev/null | grep -c 'Device Type:.*GPU')"; \
 			gpus=$(DEVICE_TIMELINE_GPUS); [ "$$gpus" -le "$$ndev" ] || gpus="$$ndev"; \
 			LABEL="hip-hipcc-N$$n" scripts/device_timeline.sh ./cwt-hip-hipcc \
@@ -306,10 +309,9 @@ VERIFY_N       ?= 2048
 VERIFY_SAMPLES ?= 2000
 
 verify: build
-	@. ./setup-backends.sh; \
-	echo "==> Correctness check: --verify --verify-samples $(VERIFY_SAMPLES), N=$(VERIFY_N), single GPU"; \
-	if [[ "$$BACKENDS" == *"cuda"* ]]; then \
-		cuda_sm="sm_$${CUDA_DEV_TARGET#sm_}"; \
+	@echo "==> Correctness check: --verify --verify-samples $(VERIFY_SAMPLES), N=$(VERIFY_N), single GPU"; \
+	if [[ "$(BACKENDS)" == *"cuda"* ]]; then \
+		cuda_sm="$(CUDA_SM)"; \
 		echo "--- CUDA / NVCC ---"; \
 		./cwt-cuda-nvcc --mode single --N $(VERIFY_N) --B 1 --csv /dev/null --forward-only \
 		  --verify --verify-samples $(VERIFY_SAMPLES) || exit 1; \
@@ -318,8 +320,8 @@ verify: build
 		  ./cwt-cuda-scale-nvidia --mode single --N $(VERIFY_N) --B 1 --csv /dev/null --forward-only \
 		    --verify --verify-samples $(VERIFY_SAMPLES) ) || exit 1; \
 	fi; \
-	if [[ "$$BACKENDS" == *"hip"* ]]; then \
-		hip_arch="$${HIP_DEV_TARGET:-gfx908}"; \
+	if [[ "$(BACKENDS)" == *"hip"* ]]; then \
+		hip_arch="$(HIP_ARCH)"; \
 		echo "--- HIP / HIPCC ---"; \
 		./cwt-hip-hipcc --mode single --N $(VERIFY_N) --B 1 --csv /dev/null --forward-only \
 		  --verify --verify-samples $(VERIFY_SAMPLES) || exit 1; \
@@ -355,10 +357,9 @@ ICWT_N ?= 256
 ICWT_MAX_REL_RMS ?= 0.05
 
 icwt-demo: build | ensure-plot-deps
-	@. ./setup-backends.sh; \
-	mkdir -p results plots; \
-	if [[ "$$BACKENDS" == *"cuda"* ]]; then \
-		cuda_sm="sm_$${CUDA_DEV_TARGET#sm_}"; \
+	@mkdir -p results plots; \
+	if [[ "$(BACKENDS)" == *"cuda"* ]]; then \
+		cuda_sm="$(CUDA_SM)"; \
 		echo "--- CUDA / NVCC ---"; \
 		./cwt-cuda-nvcc --mode single --N $(ICWT_N) --B 1 --csv /dev/null --forward-only \
 		  --icwt --icwt-dir results/icwt-cuda-nvcc --icwt-max-rel-rms $(ICWT_MAX_REL_RMS) || exit 1; \
@@ -369,8 +370,8 @@ icwt-demo: build | ensure-plot-deps
 		    --icwt --icwt-dir results/icwt-scale-nvidia --icwt-max-rel-rms $(ICWT_MAX_REL_RMS) ) || exit 1; \
 		"$(PLOT_PY)" plotting/plot_icwt.py results/icwt-scale-nvidia --outdir $(PLOTS_DIR) --label scale-nvidia-N$(ICWT_N) || exit 1; \
 	fi; \
-	if [[ "$$BACKENDS" == *"hip"* ]]; then \
-		hip_arch="$${HIP_DEV_TARGET:-gfx908}"; \
+	if [[ "$(BACKENDS)" == *"hip"* ]]; then \
+		hip_arch="$(HIP_ARCH)"; \
 		echo "--- HIP / HIPCC ---"; \
 		./cwt-hip-hipcc --mode single --N $(ICWT_N) --B 1 --csv /dev/null --forward-only \
 		  --icwt --icwt-dir results/icwt-hip-hipcc --icwt-max-rel-rms $(ICWT_MAX_REL_RMS) || exit 1; \

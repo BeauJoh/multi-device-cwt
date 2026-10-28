@@ -7,7 +7,6 @@ A small benchmark for scaling Continuous Wavelet Transforms (CWT) across multipl
 - `cwt_cuda.cu` — CUDA implementation of the forward CWT (Mexican hat wavelet), built two ways: natively with `nvcc`, and through SCALE targeting either NVIDIA or AMD hardware.
 - `cwt_hip.cpp` — native HIP port of the same kernel, built with `hipcc`.
 - `Makefile` — builds the four binaries below.
-- `setup-backends.sh` — exports host-specific toolchain/arch environment variables (`CUDA_DEV_TARGET`, `HIP_DEV_TARGET`, `SCALE_ROOT`, etc.) based on `hostname -s`.
 
 ## Build targets
 
@@ -23,7 +22,19 @@ A small benchmark for scaling Continuous Wavelet Transforms (CWT) across multipl
 - A CUDA toolkit (`nvcc`) for the native and SCALE→NVIDIA builds.
 - ROCm/HIP (`hipcc`) for the native HIP build.
 - A SCALE install, unpacked at `./scale-1.7.2` (or point `SCALE_ROOT` elsewhere) for the two `scale-*` builds. You don't need to install this yourself — `make cwt-cuda-scale-nvidia` / `make cwt-cuda-scale-amd` depend on an `ensure-scale` target that downloads and unpacks SCALE 1.7.2 (pinned, via `SCALE_TARBALL_URL`) automatically if it's missing.
-- `hostname -s` must match a known host in `setup-backends.sh`, or export `CUDA_DEV_TARGET` / `HIP_DEV_TARGET` yourself.
+- Your shell environment provides the toolchain: put the right `nvcc` / `hipcc` on `PATH` (e.g. `module load` / `module swap`) before running `make`. In NVIDIA mode SCALE uses whichever CUDA toolkit `scaleenv` finds (its "Using cuda install at…" line), so pick a SCALE-supported one in your shell first.
+- No per-host config file. The Makefile detects what it needs from the installed GPUs and you can override any of it on the command line:
+
+  | Variable | Meaning | Default |
+  |---|---|---|
+  | `BACKENDS` | `cuda`, `hip`, or both | detected (`nvidia-smi -L`, `rocminfo`) |
+  | `CUDA_ARCH` | compute capability, `90` or `sm_90` | detected (`nvidia-smi`) |
+  | `HIP_ARCH` | gfx target, e.g. `gfx950` | detected (`rocminfo`) |
+  | `SCALE_DIR` (or `SCALE_ROOT`) | SCALE install holding `bin/scaleenv` | `./scale-1.7.2` (auto-downloaded) |
+  | `MACHINE` | label written to the results CSV | `hostname -s` |
+  | `REMOTE_HOST` | ssh alias of the other box for `megaplot` | unset (megaplot skipped) |
+
+  e.g. `make BACKENDS=hip HIP_ARCH=gfx950 MACHINE=MI355X SCALE_DIR=$HOME/scale-1.7.4-Linux`.
 
 ## Building
 
@@ -33,7 +44,7 @@ Just run:
 make
 ```
 
-This sources `setup-backends.sh` itself, checks `BACKENDS` for the current host, and builds only what's relevant: `cuda` → `cwt-cuda-nvcc` + `cwt-cuda-scale-nvidia`; `hip` → `cwt-hip-hipcc` + `cwt-cuda-scale-amd`; a host with both (e.g. `zenith`) builds all four. No need to `source` anything first.
+This checks `BACKENDS` (detected from the installed GPUs unless you set it) and builds only what's relevant: `cuda` → `cwt-cuda-nvcc` + `cwt-cuda-scale-nvidia`; `hip` → `cwt-hip-hipcc` + `cwt-cuda-scale-amd`; a host with both builds all four.
 
 To force every target regardless of `BACKENDS` (e.g. cross-checking on a dev box), use `make all`. Or build a single target directly, e.g. `make cwt-cuda-nvcc`.
 
@@ -204,7 +215,7 @@ make sweep N=4096 REPS=10
 
 `make clean-results` removes the results directory.
 
-`make sweep` also auto-runs `make megaplot` at the end, using the `REMOTE_HOST` default set per host in `setup-backends.sh` — so a plain `make sweep` on either box both collects results and refreshes the combined plots against whatever the other box last swept. If the other box hasn't swept yet (or its results.csv isn't there), this step just warns and skips rather than failing the sweep; rerun `make megaplot REMOTE_HOST=<...>` by hand once both sides are done. Override with `make sweep REMOTE_HOST=<other-alias>` or unset it to skip.
+`make sweep` also auto-runs `make megaplot` at the end, when `REMOTE_HOST` is set (`make sweep REMOTE_HOST=<other-alias>`) — so one `make sweep` collects results and refreshes the combined plots against whatever the other box last swept. If `REMOTE_HOST` is unset this step is skipped. If the other box hasn't swept yet (or its results.csv isn't there), it just warns rather than failing the sweep; rerun `make megaplot REMOTE_HOST=<...>` by hand once both sides are done.
 
 ### Sweeping across problem sizes
 
@@ -253,7 +264,7 @@ If you're running this across more than one machine and they can `ssh` to each o
 make megaplot REMOTE_HOST=<ssh alias for the other box>
 ```
 
-Run the same command (with the appropriate alias) from either side. `REMOTE_HOST` should be whatever ssh alias reaches the other box; `setup-backends.sh` can set a per-host default so you don't have to pass it explicitly. Override `REMOTE_PATH` if the repo lives somewhere other than the default path on the remote, and `METRIC`/`PLOTS_DIR` the same way as above. Output is split by problem size first (`plots/N-<n>/...`, skipped if there's only one size), then by GPU count within each size (`plots/N-<n>/devices-<d>/...`, same skip rule); the vs-N charts land directly under `plots/`. Combined raw CSV is written to `results/scaling-combined.csv`.
+Run the same command (with the appropriate alias) from either side. `REMOTE_HOST` should be whatever ssh alias reaches the other box; Override `REMOTE_PATH` if the repo lives somewhere other than the default path on the remote, and `METRIC`/`PLOTS_DIR` the same way as above. Output is split by problem size first (`plots/N-<n>/...`, skipped if there's only one size), then by GPU count within each size (`plots/N-<n>/devices-<d>/...`, same skip rule); the vs-N charts land directly under `plots/`. Combined raw CSV is written to `results/scaling-combined.csv`.
 
 `make megaplot` installs `pandas`/`matplotlib` itself the first time, into a local venv at `.venv-plots` (no system pip access needed, and it won't touch any other Python on the box). `make clean-plot-deps` removes that venv if you ever want it rebuilt.
 
