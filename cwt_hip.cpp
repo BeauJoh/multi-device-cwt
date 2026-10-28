@@ -376,6 +376,13 @@ int main(int argc, char** argv) {
   auto h_scales = logspace(0.001, 2.0, A);
   auto h_trans = linspace(-1.0, 1.0, N);
   std::vector<real_t> h_cwt(size_t(B) * A * N, 0);
+  // Optional: page-lock the result buffer (outside the timed region) so the
+  // device-to-host copies are true DMA instead of staged pageable copies.
+  const bool pinned_host = std::getenv("CWT_PINNED_HOST") != nullptr;
+  if (pinned_host) {
+    HIP_CHECK(hipHostRegister(h_cwt.data(), sizeof(real_t) * h_cwt.size(),
+                                hipHostRegisterDefault));
+  }
 
   auto tasks = make_tasks(A, chunks);
 
@@ -468,13 +475,18 @@ int main(int argc, char** argv) {
     int a1 = tasks[i].a1;
     int a_count = a1 - a0;
 
-    real_t* dst = h_cwt.data() + size_t(a0) * N;
-    HIP_CHECK(hipMemcpyAsync(
-        dst,
-        d_out[i],
-        sizeof(real_t) * B * a_count * N,
-        hipMemcpyDeviceToHost,
-        streams[w]));
+    // Device buffer is laid out (b, a_local, n); host is (b, a, n). Copy one
+    // contiguous a_count*N block per batch index to its correct host offset
+    // (a single copy at a0*N made the per-device regions overlap for B > 1).
+    for (int b = 0; b < B; ++b) {
+      real_t* dst = h_cwt.data() + (size_t(b) * A + a0) * N;
+      HIP_CHECK(hipMemcpyAsync(
+          dst,
+          d_out[i] + size_t(b) * a_count * N,
+          sizeof(real_t) * size_t(a_count) * N,
+          hipMemcpyDeviceToHost,
+          streams[w]));
+    }
   }
 
   // Busy-poll each device's stream instead of a blind, in-order
