@@ -121,7 +121,7 @@ cwt-hip-hipcc: $(CWT_HIP_SRC)
 # chosen later via `scaleenv <arch>`), so this is identical on NVIDIA and
 # AMD hosts.
 ensure-scale:
-	@if [ ! -x "$(SCALE_ROOT)/bin/scaleenv" ]; then \
+	@if [ ! -f "$(SCALE_ROOT)/bin/scaleenv" ]; then \
 		echo "==> SCALE not found at $(SCALE_ROOT)"; \
 		echo "==> Downloading and installing SCALE from $(SCALE_TARBALL_URL)"; \
 		tmpdir="$$(mktemp -d)"; \
@@ -144,7 +144,7 @@ ensure-scale:
 		echo "==> Installed SCALE to $(SCALE_ROOT)."; \
 		echo "==> If this is the first install, log out/in (or reboot) so the render/video group membership applies."; \
 	fi
-	@if [ ! -x "$(SCALE_ROOT)/bin/scaleenv" ]; then \
+	@if [ ! -f "$(SCALE_ROOT)/bin/scaleenv" ]; then \
 		echo "error: missing SCALE: $(SCALE_ROOT)/bin/scaleenv" >&2; \
 		echo "==> debug: contents of $(SCALE_ROOT)/bin (if it exists):" >&2; \
 		ls -la "$(SCALE_ROOT)/bin" >&2 2>&1 || echo "  (no such directory)" >&2; \
