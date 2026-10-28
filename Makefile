@@ -69,6 +69,13 @@ SIZES ?= 2048 4096 8192 16384
 # of scales). `make sweep-weak` is the multi-size version, written to
 # $(WEAK_CSV) (columns B and devices record what was run).
 WEAK ?=
+
+# WARMUP=1 passes --warmup to every run: one untimed launch + copy-back per
+# device before the timer starts, so start-up costs are excluded. Rows are
+# labelled "(warm)"; write them to their own CSV, e.g.
+#   make sweep-sizes WARMUP=1 CSV=results/scaling-warm.csv
+WARMUP ?=
+WARMUP_FLAG := $(if $(WARMUP),--warmup)
 WEAK_CSV ?= $(RESULTS_DIR)/weak.csv
 
 # ------------------------------------------------------------
@@ -205,11 +212,11 @@ sweep: build
 			for rep in $$(seq 1 $(REPS)); do \
 				echo "--- CUDA/NVCC gpus=$$gpus rep=$$rep/$(REPS) ---"; \
 				CWT_IMPL="CUDA / NVCC" CWT_BACKEND="CUDA" CWT_MACHINE="$(MACHINE)" \
-				  ./cwt-cuda-nvcc --mode explicit --N $(N) --B $$b --gpus $$gpus --csv "$(CSV)" --forward-only; \
+				  ./cwt-cuda-nvcc --mode explicit --N $(N) --B $$b --gpus $$gpus --csv "$(CSV)" --forward-only $(WARMUP_FLAG) || exit 1; \
 				echo "--- CUDA/SCALE-NVIDIA gpus=$$gpus rep=$$rep/$(REPS) ---"; \
 				( source "$(SCALE_ROOT)/bin/scaleenv" "$$sweep_cuda_sm" && \
 				  CWT_IMPL="CUDA / SCALE→NVIDIA" CWT_BACKEND="CUDA" CWT_MACHINE="$(MACHINE)" \
-				  ./cwt-cuda-scale-nvidia --mode explicit --N $(N) --B $$b --gpus $$gpus --csv "$(CSV)" --forward-only ); \
+				  ./cwt-cuda-scale-nvidia --mode explicit --N $(N) --B $$b --gpus $$gpus --csv "$(CSV)" --forward-only $(WARMUP_FLAG) ) || exit 1; \
 			done; \
 		done; \
 		ran_any=1; \
@@ -225,11 +232,11 @@ sweep: build
 			for rep in $$(seq 1 $(REPS)); do \
 				echo "--- HIP/HIPCC gpus=$$gpus rep=$$rep/$(REPS) ---"; \
 				CWT_IMPL="HIP / HIPCC" CWT_BACKEND="HIP" CWT_MACHINE="$(MACHINE)" \
-				  ./cwt-hip-hipcc --mode explicit --N $(N) --B $$b --gpus $$gpus --csv "$(CSV)" --forward-only; \
+				  ./cwt-hip-hipcc --mode explicit --N $(N) --B $$b --gpus $$gpus --csv "$(CSV)" --forward-only $(WARMUP_FLAG) || exit 1; \
 				echo "--- CUDA/SCALE-AMD gpus=$$gpus rep=$$rep/$(REPS) ---"; \
 				( source "$(SCALE_ROOT)/bin/scaleenv" "$$sweep_hip_arch" && \
 				  CWT_IMPL="CUDA / SCALE→AMD" CWT_BACKEND="HIP" CWT_MACHINE="$(MACHINE)" \
-				  ./cwt-cuda-scale-amd --mode explicit --N $(N) --B $$b --gpus $$gpus --csv "$(CSV)" --forward-only ); \
+				  ./cwt-cuda-scale-amd --mode explicit --N $(N) --B $$b --gpus $$gpus --csv "$(CSV)" --forward-only $(WARMUP_FLAG) ) || exit 1; \
 			done; \
 		done; \
 		ran_any=1; \

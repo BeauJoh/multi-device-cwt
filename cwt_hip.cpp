@@ -29,6 +29,7 @@ struct Args {
   int chunks = 1;
   int sweep = 1;
   bool forward_only = false;
+  bool warmup = false;
   bool verify = false;
   long verify_samples = 2000;
   bool icwt = false;
@@ -282,7 +283,8 @@ static void append_csv(
     const std::string& path,
     int N, int B, int A, int chunks,
     double fwd_s,
-    double rel_err) {
+    double rel_err,
+    bool warm) {
   bool exists = std::ifstream(path).good();
   std::ofstream f(path, std::ios::app);
 
@@ -292,6 +294,7 @@ static void append_csv(
   }
 
   std::string impl = getenv_or("CWT_IMPL", "HIP / HIPCC");
+  if (warm) impl += " (warm)";
   std::string machine = getenv_or("CWT_MACHINE", "UnknownMachine");
   std::string backend = getenv_or("CWT_BACKEND", "HIP");
 
@@ -333,6 +336,8 @@ static Args parse_args(int argc, char** argv) {
       a.csv = need(s.c_str());
     } else if (s == "--forward-only") {
       a.forward_only = true;
+    } else if (s == "--warmup") {
+      a.warmup = true;
     } else if (s == "--verify") {
       a.verify = true;
     } else if (s == "--verify-samples") {
@@ -430,6 +435,43 @@ int main(int argc, char** argv) {
   std::vector<double> launch_ms(physical_workers, -1.0);
   std::vector<double> done_ms(physical_workers, -1.0);
 
+  // --warmup: run the whole launch + copy-back sequence once, untimed, so
+  // one-time start-up costs (code-object load, first dispatch and first
+  // copy per device, queue setup) are paid before the timed region. Off by
+  // default: the default measures a cold run, which is what a first call
+  // sees. Same calls and same outputs as the timed run below (it is simply
+  // overwritten), so it favours neither build. Rows are labelled "(warm)".
+  if (args.warmup) {
+    for (int i = 0; i < int(tasks.size()); ++i) {
+      int w = args.mode == "single" ? 0 : (i % physical_workers);
+      HIP_CHECK(hipSetDevice(w));
+      int a0 = tasks[i].a0;
+      int a_count = tasks[i].a1 - a0;
+      dim3 block(128);
+      dim3 grid((N + block.x - 1) / block.x, a_count, B);
+      hipLaunchKernelGGL(cwt_forward_kernel, grid, block, 0, streams[w],
+                         d_fx[w], d_scales[w], d_trans[w], d_out[i], B, N, a0, a_count);
+      HIP_CHECK(hipGetLastError());
+    }
+    for (int i = 0; i < int(tasks.size()); ++i) {
+      int w = args.mode == "single" ? 0 : (i % physical_workers);
+      HIP_CHECK(hipSetDevice(w));
+      int a0 = tasks[i].a0;
+      int a_count = tasks[i].a1 - a0;
+      for (int b = 0; b < B; ++b) {
+        HIP_CHECK(hipMemcpyAsync(
+            h_cwt.data() + (size_t(b) * A + a0) * N,
+            d_out[i] + size_t(b) * a_count * N,
+            sizeof(real_t) * size_t(a_count) * N,
+            hipMemcpyDeviceToHost, streams[w]));
+      }
+    }
+    for (int w = 0; w < physical_workers; ++w) {
+      HIP_CHECK(hipSetDevice(w));
+      HIP_CHECK(hipStreamSynchronize(streams[w]));
+    }
+  }
+
   auto t0 = std::chrono::steady_clock::now();
   auto ms_since_t0 = [&]() {
     return std::chrono::duration<double, std::milli>(
@@ -519,6 +561,7 @@ int main(int argc, char** argv) {
 
   {
     std::string impl_for_timeline = getenv_or("CWT_IMPL", "HIP / HIPCC");
+    if (args.warmup) impl_for_timeline += " (warm)";
     std::string machine_for_timeline = getenv_or("CWT_MACHINE", "UnknownMachine");
     for (int w = 0; w < physical_workers; ++w) {
       std::cout << "##DEVICE_TIMELINE impl=\"" << impl_for_timeline
@@ -610,7 +653,7 @@ int main(int argc, char** argv) {
             << (args.verify ? (verify_pass ? "  (verify=PASS)" : "  (verify=FAIL)")
                              : "  (not checked -- pass --verify)") << "\n";
 
-  append_csv(args.csv, N, B, A, chunks, fwd_s, rel_err);
+  append_csv(args.csv, N, B, A, chunks, fwd_s, rel_err, args.warmup);
   std::cout << "\nAppended results CSV: " << args.csv << "\n";
 
   if (args.icwt && !icwt_ok) {
