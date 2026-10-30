@@ -87,7 +87,7 @@ REMOTE_PATH ?= /home/smc/multi-device-cwt
 METRIC      ?= fwd_gflops
 PLOTS_DIR   ?= plots
 
-.PHONY: all build sweep sweep-sizes sweep-weak megaplot device-timelines verify icwt-demo clean clean-results clean-plot-deps \
+.PHONY: all build sweep sweep-sizes sweep-weak megaplot device-timelines verify verify-multi icwt-demo clean clean-results clean-plot-deps \
         cwt-cuda-nvcc cwt-hip-hipcc \
         cwt-cuda-scale-nvidia cwt-cuda-scale-amd \
         ensure-scale ensure-plot-deps
@@ -319,8 +319,7 @@ device-timelines: build
 
 # ------------------------------------------------------------
 # Numerical correctness check: run each applicable binary once, single-GPU
-# (avoids the multi-chunk/B>1 host-buffer indexing caveat noted in
-# cwt_hip.cpp/cwt_cuda.cu), with --verify -- a random sample of forward-CWT
+# with --verify -- a random sample of forward-CWT
 # output points compared against a CPU reference using the identical math.
 # Reports PASS/FAIL per implementation. See README's "Running" section.
 # ------------------------------------------------------------
@@ -349,6 +348,33 @@ verify: build
 		  ./cwt-cuda-scale-amd --mode single --N $(VERIFY_N) --B 1 --csv /dev/null --forward-only \
 		    --verify --verify-samples $(VERIFY_SAMPLES) ) || exit 1; \
 	fi
+
+# ------------------------------------------------------------
+# Multi-GPU correctness: the same --verify check across GPU counts, for strong
+# scaling (B=1) and weak scaling (B=GPUs), every applicable binary. Not on the
+# timed path. Needs that many GPUs; set VERIFY_GPUS to what the node has.
+#   make verify-multi VERIFY_GPUS="1 2 4 8" VERIFY_MULTI_SIZES="2048 8192 16384"
+# ------------------------------------------------------------
+VERIFY_GPUS        ?= 1 2 4 8
+VERIFY_MULTI_SIZES ?= 2048 8192 16384
+
+verify-multi: build
+	@vm() { echo "=== $$1 N=$$3 gpus=$$4 B=$$5"; \
+	  if [ "$$2" = scale ]; then out=$$( source "$(SCALE_ROOT)/bin/scaleenv" "$$6" && ./$$1 --mode explicit --N $$3 --B $$5 --gpus $$4 --csv /dev/null --forward-only --verify --verify-samples $(VERIFY_SAMPLES) 2>&1 ); \
+	  else out=$$( ./$$1 --mode explicit --N $$3 --B $$5 --gpus $$4 --csv /dev/null --forward-only --verify --verify-samples $(VERIFY_SAMPLES) 2>&1 ); fi; \
+	  echo "$$out" | grep -E "verify_samples"; \
+	  echo "$$out" | grep -q "verify=PASS" || { echo "FAIL: $$1 N=$$3 gpus=$$4 B=$$5"; return 1; }; }; \
+	for n in $(VERIFY_MULTI_SIZES); do for g in $(VERIFY_GPUS); do \
+	  for mode in strong weak; do \
+	    b=1; if [ $$mode = weak ]; then b=$$g; [ $$g -gt 1 ] || continue; fi; \
+	    echo "--- $$mode"; \
+	    if [[ "$(BACKENDS)" == *"cuda"* ]]; then \
+	      vm cwt-cuda-nvcc native $$n $$g $$b || exit 1; \
+	      vm cwt-cuda-scale-nvidia scale $$n $$g $$b "$(CUDA_SM)" || exit 1; fi; \
+	    if [[ "$(BACKENDS)" == *"hip"* ]]; then \
+	      vm cwt-hip-hipcc native $$n $$g $$b || exit 1; \
+	      vm cwt-cuda-scale-amd scale $$n $$g $$b "$(HIP_ARCH)" || exit 1; fi; \
+	  done; done; done; echo "==> verify-multi: all PASS"
 
 # ------------------------------------------------------------
 # ICWT round-trip demo: forward CWT + a simple inverse-CWT (ICWT)

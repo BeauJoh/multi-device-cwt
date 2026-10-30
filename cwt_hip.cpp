@@ -614,11 +614,8 @@ int main(int argc, char** argv) {
       int a_idx = pick_a(rng);
       int n = pick_n(rng);
       real_t ref = cpu_forward_ref(h_fx, h_scales, h_trans, N, b, a_idx, n);
-      // NOTE: this indexing assumes B==1 or chunks==1 -- with multiple
-      // GPU chunks *and* B>1, the per-task memcpy above packs h_cwt in a
-      // way that does not correspond to a clean (b*A+a)*N+n layout. Every
-      // sweep in this project uses --B 1, so this has never mattered in
-      // practice, but flagging it here rather than silently mis-indexing.
+      // Host layout is (b, a, n); the per-batch copies above place each device's
+      // scale range at (b*A + a0)*N, so this indexing is valid for any B and chunk count.
       real_t got = h_cwt[(size_t(b) * A + a_idx) * N + n];
       real_t abs_err = std::fabs(double(got) - double(ref));
       real_t rel_err_i = abs_err / (std::fabs(double(ref)) + atol);
